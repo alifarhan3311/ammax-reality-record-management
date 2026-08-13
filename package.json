@@ -1,0 +1,13 @@
+{
+  "name": "ammax-record-management",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": ["client", "server"],
+  "scripts": {
+    "dev": "npm run dev --prefix server",
+    "build": "npm run build --prefix client",
+    "vercel-build": "npm run build --prefix client",
+    "start": "npm start --prefix server"
+  }
+}

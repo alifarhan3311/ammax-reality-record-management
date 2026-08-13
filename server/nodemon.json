@@ -1,0 +1,7 @@
+{
+  "watch": ["src", "../client/src", "../client/index.html"],
+  "ext": "js,jsx,css,html,json",
+  "ignore": ["../client/dist", "../client/node_modules", "node_modules"],
+  "exec": "npm run refresh",
+  "delay": 300
+}
