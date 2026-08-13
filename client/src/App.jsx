@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, Moon, Pencil, Search, Sun, Trash2, X } from 'lucide-react';
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
@@ -26,21 +26,22 @@ const fields = [
   ['subjectRemovalDate', 'Subject Removal Date', 'date']
 ];
 
-function Header({ dark, toggleTheme }) {
+function Header({ dark, toggleTheme, user, onLogout }) {
   return <header className="header">
     <div className="nav-shell">
       <a className="brand" href="#" aria-label="AMMAX Realty home">
         <img className="logo-image" src="https://ammax.ca/logo.png" alt="AMMAX" />
         <span>AMMAX REALTY INC<span className="gold">.</span></span>
       </a>
-      <button className="theme-button" onClick={toggleTheme} aria-label="Toggle theme">
-        {dark ? <Sun size={17} /> : <Moon size={17} />}
-      </button>
+      <div className="header-actions">{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16}/> : <UserRound size={16}/>}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
+        <button className="theme-button" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
+        {user && <button className="logout-button" onClick={onLogout}><LogOut size={15}/> Logout</button>}
+      </div>
     </div>
   </header>;
 }
 
-function TransactionCard({ item, onDelete }) {
+function TransactionCard({ item, onDelete, showOwner }) {
   const display = [
     ['Address', item.address], ['Buyer', item.buyer], ['Agent', item.agent], ['Close of Deal', item.closeOfDeal],
     ['Sale Price', item.salePrice ? `$${Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—'],
@@ -49,7 +50,7 @@ function TransactionCard({ item, onDelete }) {
   return <article className="transaction-card">
     <div className="card-details">{display.map(([label, value]) => <div className="detail" key={label}>
       <span>{label}</span><strong>{value || '—'}</strong>
-    </div>)}</div>
+    </div>)}</div>{showOwner && <div className="owner-line"><ShieldCheck size={13}/><span>Created by <strong>{item.createdBy?.name || 'Administrator'}</strong>{item.createdBy?.email && ` · ${item.createdBy.email}`}</span></div>}
     <div className="card-actions">
       <Link className="action-button view-action" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={18} /></Link>
       <Link className="action-button edit-action" to={`/transactions/${item._id || item.id}?edit=1`} aria-label={`Edit ${item.address}`} title="Edit transaction"><Pencil size={17} /></Link>
@@ -286,7 +287,7 @@ function ChecklistForm({ transaction, onUpdated }) {
   </div>;
 }
 
-function TransactionDetail() {
+function TransactionDetail({ user, onLogout }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [transaction, setTransaction] = useState(null);
@@ -295,11 +296,11 @@ function TransactionDetail() {
   const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark');
   useEffect(() => { fetch(`/api/transactions/${id}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setTransaction).catch(() => setTransaction(false)).finally(() => setLoading(false)); }, [id]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
-  if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
-  if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
+  if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
+  if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
   const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : transaction[key] || '—';
   return <>
-    <Header dark={dark} toggleTheme={() => setDark(!dark)} />
+    <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
     <main className="detail-page">
       <button className="back-link" onClick={() => navigate('/')}><ArrowLeft size={16} /> Back to transactions</button>
       <div className="record-title-row">
@@ -352,7 +353,7 @@ function TransactionModal({ onClose, onCreated }) {
   </div>;
 }
 
-function TransactionsPage() {
+function TransactionsPage({ user, onLogout }) {
   const [dark, setDark] = useState(false);
   const [open, setOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
@@ -385,7 +386,7 @@ function TransactionsPage() {
     finally { setDeletingId(''); }
   };
   return <>
-    <Header dark={dark} toggleTheme={() => setDark(!dark)} />
+    <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
     <main>
       <div className="page-heading">
         <div><span className="eyebrow">Records Management</span><h1>Transactions</h1><p>Manage your real estate transaction records in one place.</p></div>
@@ -394,13 +395,40 @@ function TransactionsPage() {
       <div className="toolbar"><div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div><span>{filtered.length} {filtered.length === 1 ? 'record' : 'records'}</span></div>
       {loading ? <div className="empty"><div className="empty-icon"><CalendarDays /></div><h3>Loading transactions…</h3></div>
         : loadError ? <div className="empty"><div className="empty-icon"><X /></div><h3>Transactions could not be loaded</h3><p>{loadError}. Please check the MongoDB connection.</p></div>
-        : filtered.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{filtered.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} />)}</div>
+        : filtered.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{filtered.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} showOwner={user.role === 'admin'} />)}</div>
         : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query ? 'Try a different search term.' : 'Create your first transaction to see it listed here.'}</p>{!query && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
     </main>
     {open && <TransactionModal onClose={() => setOpen(false)} onCreated={item => setTransactions([item, ...transactions])} />}
   </>;
 }
 
+function AuthPage({ mode, onAuthenticated }) {
+  const isSignup = mode === 'signup'; const navigate = useNavigate();
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
+  const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
+  const submit = async event => {
+    event.preventDefault(); setError('');
+    if (isSignup && form.password !== form.confirmPassword) return setError('Passwords do not match');
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.message || 'Authentication failed');
+      onAuthenticated(result.user); navigate('/');
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX"/><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>{isSignup ? 'Create your account' : 'Welcome back'}</h1><p>{isSignup ? 'Sign up to manage your own transaction records.' : 'Sign in to continue to your transactions.'}</p><form onSubmit={submit}>{isSignup && <label><span>Full Name</span><input value={form.name} onChange={e => setForm({...form,name:e.target.value})} required autoComplete="name" /></label>}<label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({...form,email:e.target.value})} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({...form,password:e.target.value})} required autoComplete={isSignup ? 'new-password' : 'current-password'} /></label>{isSignup && <label><span>Confirm Password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({...form,confirmPassword:e.target.value})} required autoComplete="new-password" /></label>}{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : isSignup ? 'Create Account' : 'Sign In'}</button></form><div className="auth-switch">{isSignup ? 'Already have an account?' : 'New to AMMAX Records?'} <Link to={isSignup ? '/login' : '/signup'}>{isSignup ? 'Sign in' : 'Create account'}</Link></div></section></div>;
+}
+
 export default function App() {
-  return <Routes><Route path="/" element={<TransactionsPage />} /><Route path="/transactions/:id" element={<TransactionDetail />} /><Route path="*" element={<TransactionsPage />} /></Routes>;
+  const [user, setUser] = useState(null); const [checking, setChecking] = useState(true);
+  useEffect(() => { fetch('/api/auth/me').then(response => response.ok ? response.json() : null).then(result => setUser(result?.user || null)).finally(() => setChecking(false)); }, []);
+  const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); };
+  if (checking) return <div className="auth-loading"><img src="https://ammax.ca/logo.png" alt="AMMAX"/><p>Loading secure workspace…</p></div>;
+  return <Routes>
+    <Route path="/login" element={user ? <Navigate to="/" replace /> : <AuthPage mode="login" onAuthenticated={setUser} />} />
+    <Route path="/signup" element={user ? <Navigate to="/" replace /> : <AuthPage mode="signup" onAuthenticated={setUser} />} />
+    <Route path="/" element={user ? <TransactionsPage user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
+    <Route path="/transactions/:id" element={user ? <TransactionDetail user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
+    <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
+  </Routes>;
 }

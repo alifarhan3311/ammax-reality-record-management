@@ -28,7 +28,20 @@ On Vercel, checklist uploads are limited to 4 MB per file because files pass thr
    - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
    - `GOOGLE_PRIVATE_KEY` (paste the complete private key, including BEGIN/END lines)
    - `GOOGLE_DRIVE_FOLDER_ID`
+   - `JWT_SECRET`: a long random value used to sign secure login sessions.
+   - `ADMIN_NAME`: the initial administrator's display name.
+   - `ADMIN_EMAIL`: the initial administrator's login email.
+   - `ADMIN_PASSWORD`: a strong initial administrator password (minimum 8 characters).
 5. In MongoDB Atlas Network Access, allow Vercel connectivity. For a simple setup use `0.0.0.0/0` with a strong database user/password; a managed fixed-egress setup is safer for production.
 6. Deploy. Verify `/api/health`, then create and reload a transaction.
 
 The React SPA is served from `client/dist`, while `/api/*` is handled by the Vercel serverless Express function in `api/index.js`.
+
+## Authentication and access control
+
+- Public signup always creates a normal `user`; it can never create an admin.
+- Users only see and modify transactions whose `createdBy` matches their account.
+- Admins can see and manage every user's transactions, including owner name/email in the list.
+- Ownership is enforced by the API for list, detail, update, delete, contacts, commission, checklist, and Drive uploads.
+- On startup, the account matching `ADMIN_EMAIL` is created/promoted to admin. Existing transactions without an owner are assigned to this initial admin.
+- Authentication uses a seven-day JWT stored in an HTTP-only cookie. Never commit `JWT_SECRET` or admin credentials to GitHub.

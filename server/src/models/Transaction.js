@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const transactionSchema = new mongoose.Schema({
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   address: { type: String, required: true, trim: true }, agent: { type: String, required: true, trim: true },
   closeOfDeal: String, salePrice: Number, buyer: { type: String, required: true, trim: true },
   acceptanceDate: String, dealNumber: String, email: { type: String, required: true, trim: true, lowercase: true },
