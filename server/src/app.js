@@ -55,6 +55,16 @@ app.put('/api/transactions/:id', async (req, res) => {
     if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
   } catch (error) { res.status(500).json({ message: 'Could not update transaction', error: error.message }); }
 });
+app.delete('/api/transactions/:id', async (req, res) => {
+  try {
+    const record = await Transaction.findByIdAndDelete(req.params.id);
+    if (!record) return res.status(404).json({ message: 'Transaction not found' });
+    res.json({ message: 'Transaction deleted successfully', id: record._id });
+  } catch (error) {
+    const status = error.name === 'CastError' ? 404 : 500;
+    res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not delete transaction', error: error.message });
+  }
+});
 
 for (const section of ['contacts', 'commission', 'checklist']) {
   app.put(`/api/transactions/:id/${section}`, async (req, res) => {

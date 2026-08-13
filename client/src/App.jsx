@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, Moon, Search, Sun, X } from 'lucide-react';
+import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, Moon, Pencil, Search, Sun, Trash2, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
@@ -40,7 +40,7 @@ function Header({ dark, toggleTheme }) {
   </header>;
 }
 
-function TransactionCard({ item }) {
+function TransactionCard({ item, onDelete }) {
   const display = [
     ['Address', item.address], ['Buyer', item.buyer], ['Agent', item.agent], ['Close of Deal', item.closeOfDeal],
     ['Sale Price', item.salePrice ? `$${Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—'],
@@ -50,7 +50,11 @@ function TransactionCard({ item }) {
     <div className="card-details">{display.map(([label, value]) => <div className="detail" key={label}>
       <span>{label}</span><strong>{value || '—'}</strong>
     </div>)}</div>
-    <Link className="view-button" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={19} /></Link>
+    <div className="card-actions">
+      <Link className="action-button view-action" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={18} /></Link>
+      <Link className="action-button edit-action" to={`/transactions/${item._id || item.id}?edit=1`} aria-label={`Edit ${item.address}`} title="Edit transaction"><Pencil size={17} /></Link>
+      <button className="action-button delete-action" type="button" onClick={() => onDelete(item)} aria-label={`Delete ${item.address}`} title="Delete transaction"><Trash2 size={17} /></button>
+    </div>
   </article>;
 }
 
@@ -355,6 +359,7 @@ function TransactionsPage() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [deletingId, setDeletingId] = useState('');
   useEffect(() => {
     fetch('/api/transactions')
       .then(async response => {
@@ -367,6 +372,18 @@ function TransactionsPage() {
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
   const filtered = transactions.filter(t => [t.address, t.buyer, t.seller, t.agent].some(v => v?.toLowerCase().includes(query.toLowerCase())));
+  const deleteTransaction = async item => {
+    const id = item._id || item.id;
+    if (!window.confirm(`Delete transaction "${item.address}"?\n\nThis action cannot be undone.`)) return;
+    setDeletingId(id);
+    try {
+      const response = await fetch(`/api/transactions/${id}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not delete transaction');
+      setTransactions(current => current.filter(transaction => (transaction._id || transaction.id) !== id));
+    } catch (error) { window.alert(error.message); }
+    finally { setDeletingId(''); }
+  };
   return <>
     <Header dark={dark} toggleTheme={() => setDark(!dark)} />
     <main>
@@ -377,7 +394,7 @@ function TransactionsPage() {
       <div className="toolbar"><div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div><span>{filtered.length} {filtered.length === 1 ? 'record' : 'records'}</span></div>
       {loading ? <div className="empty"><div className="empty-icon"><CalendarDays /></div><h3>Loading transactions…</h3></div>
         : loadError ? <div className="empty"><div className="empty-icon"><X /></div><h3>Transactions could not be loaded</h3><p>{loadError}. Please check the MongoDB connection.</p></div>
-        : filtered.length ? <div className="transaction-list">{filtered.map(t => <TransactionCard key={t._id || t.id} item={t} />)}</div>
+        : filtered.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{filtered.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} />)}</div>
         : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query ? 'Try a different search term.' : 'Create your first transaction to see it listed here.'}</p>{!query && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
     </main>
     {open && <TransactionModal onClose={() => setOpen(false)} onCreated={item => setTransactions([item, ...transactions])} />}
