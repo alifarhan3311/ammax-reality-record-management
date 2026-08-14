@@ -357,6 +357,7 @@ const checklistDocuments = [
   ['Listing Agreement', 'Required'], ['MLS Data', 'Required'], ['RECO', 'Required']
 ];
 const defaultChecklist = () => checklistDocuments.map(([documentation, status], index) => ({ id: index + 1, documentation, status, comments: '', attachment: '' }));
+const documentDate = value => value ? new Date(value).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Previous upload';
 const checklistWithDefaults = checklist => {
   const savedRows = Array.isArray(checklist) ? checklist : [];
   const savedById = new Map(savedRows.map(row => [String(row.id), row]));
@@ -374,18 +375,23 @@ function ChecklistForm({ transaction, onUpdated }) {
     setSaving(true); setMessage('');
     try {
       let rowsToSave = [...rows];
-      for (const [itemId, file] of Object.entries(pendingFiles)) {
-        if (!file) continue;
-        if (file.size > 3 * 1024 * 1024) throw new Error(`${file.name}: File must be 3 MB or smaller`);
-        const uploadData = new FormData(); uploadData.append('file', file);
-        const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
-        const uploaded = await readApiResponse(uploadResponse);
-        if (!uploadResponse.ok) throw new Error(`${file.name}: ${uploaded.error || uploaded.message || 'Upload failed'}`);
+      for (const [itemId, files] of Object.entries(pendingFiles)) {
+        if (!files?.length) continue;
+        const uploadedDocuments = [];
+        for (const file of files) {
+          if (file.size > 3 * 1024 * 1024) throw new Error(`${file.name}: File must be 3 MB or smaller`);
+          const uploadData = new FormData(); uploadData.append('file', file);
+          const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
+          const uploaded = await readApiResponse(uploadResponse);
+          if (!uploadResponse.ok) throw new Error(`${file.name}: ${uploaded.error || uploaded.message || 'Upload failed'}`);
+          uploadedDocuments.push({ name: uploaded.name, driveFileId: uploaded.id, mimeType: uploaded.mimeType, uploadedAt: uploaded.createdTime || new Date().toISOString() });
+        }
         rowsToSave = rowsToSave.map(row => {
           if (String(row.id) !== String(itemId)) return row;
-          const legacyDocument = row.driveFileId && !(row.documents || []).some(document => document.driveFileId === row.driveFileId) ? [{ name: row.attachment, driveFileId: row.driveFileId, mimeType: row.mimeType }] : [];
-          const documents = [...legacyDocument, ...(row.documents || []), { name: uploaded.name, driveFileId: uploaded.id, mimeType: uploaded.mimeType }];
-          return { ...row, attachment: uploaded.name, driveFileId: uploaded.id, driveUrl: uploaded.webViewLink, mimeType: uploaded.mimeType, documents };
+          const legacyDocument = row.driveFileId && !(row.documents || []).some(document => document.driveFileId === row.driveFileId) ? [{ name: row.attachment, driveFileId: row.driveFileId, mimeType: row.mimeType, uploadedAt: transaction.updatedAt }] : [];
+          const documents = [...uploadedDocuments].reverse().concat(row.documents || [], legacyDocument);
+          const latest = documents[0];
+          return { ...row, attachment: latest.name, driveFileId: latest.driveFileId, mimeType: latest.mimeType, documents };
         });
       }
       const response = await fetch(`/api/transactions/${transaction._id}/checklist`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: rows }) });
@@ -411,7 +417,7 @@ function ChecklistForm({ transaction, onUpdated }) {
           <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
           <td>{row.driveFileId ? <span className="document-count">📎 {(row.documents || []).length || 1}</span> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
           <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id] ? 'Replace' : 'Attach'}<input type="file" onChange={e => { const file = e.target.files[0]; if (file) { if (file.size > 3 * 1024 * 1024) { setMessage(`${file.name}: File must be 3 MB or smaller`); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: file })); } }} /></label>{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId }] : []).map((document, documentIndex) => <a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer" key={document.driveFileId}>View {documentIndex + 1}</a>)}</div>{(pendingFiles[row.id]?.name || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.name || row.attachment}</span>}</td>
+          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label><div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <a className="document-version" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer" key={document.driveFileId}><span>View {documentIndex + 1}</span><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></a>)}</div></div>{(pendingFiles[row.id]?.length || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.length ? `${pendingFiles[row.id].length} file(s) selected` : row.attachment}</span>}</td>
         </tr>
       </Fragment>)}
     </tbody></table></div>

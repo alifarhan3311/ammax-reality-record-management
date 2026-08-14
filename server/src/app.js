@@ -226,7 +226,7 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
     const transaction = await Transaction.findOne(ownerFilter(req, req.params.id)).lean();
     if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
     const { drive, folderId } = driveClient(); const safeAddress = (transaction.address || 'Transaction').replace(/[^a-z0-9 _-]/gi, '').slice(0, 60);
-    const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size', supportsAllDrives: true });
+    const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size,createdTime', supportsAllDrives: true });
     res.status(201).json(response.data);
   } catch (error) {
     const quotaError = /service accounts do not have storage quota/i.test(error.message);
