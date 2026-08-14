@@ -26,6 +26,14 @@ const fields = [
   ['subjectRemovalDate', 'Subject Removal Date', 'date']
 ];
 
+async function readApiResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) return response.json();
+  const text = await response.text();
+  if (text.startsWith('An error occurred') || text.includes('FUNCTION_INVOCATION')) throw new Error('Server temporarily unavailable. Check Vercel Function logs and environment variables.');
+  throw new Error(text?.slice(0, 180) || `Server returned HTTP ${response.status}`);
+}
+
 function Header({ dark, toggleTheme, user, onLogout }) {
   return <header className="header">
     <div className="nav-shell">
@@ -412,7 +420,7 @@ function AuthPage({ mode, onAuthenticated }) {
     setSaving(true);
     try {
       const response = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-      const result = await response.json(); if (!response.ok) throw new Error(result.message || 'Authentication failed');
+      const result = await readApiResponse(response); if (!response.ok) throw new Error(result.message || 'Authentication failed');
       onAuthenticated(result.user); navigate('/');
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };

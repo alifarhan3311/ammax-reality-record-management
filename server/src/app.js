@@ -58,7 +58,7 @@ const requireAuth = async (req, res, next) => {
 };
 const ownerFilter = (req, id) => req.user.role === 'admin' ? { _id: id } : { _id: id, createdBy: req.user._id };
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.name }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.name, authConfigured: Boolean(process.env.JWT_SECRET) }));
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const name = String(req.body.name || '').trim(); const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
@@ -71,10 +71,15 @@ app.post('/api/auth/signup', async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not create account', error: error.message }); }
 });
 app.post('/api/auth/login', async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
-  const user = await User.findOne({ email }).select('+passwordHash');
-  if (!user || !user.isActive || !await bcrypt.compare(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' });
-  setAuthCookie(res, user); res.json({ user: publicUser(user) });
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
+    const user = await User.findOne({ email }).select('+passwordHash');
+    if (!user || !user.isActive || !await bcrypt.compare(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' });
+    setAuthCookie(res, user); res.json({ user: publicUser(user) });
+  } catch (error) {
+    console.error('Login failed:', error.message);
+    res.status(500).json({ message: error.message === 'JWT_SECRET is not configured' ? 'Login service is not configured. Add JWT_SECRET in Vercel.' : 'Login service failed', error: error.message });
+  }
 });
 app.post('/api/auth/logout', (_req, res) => { res.clearCookie('ammax_session', { path: '/' }); res.json({ message: 'Logged out' }); });
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
@@ -147,6 +152,13 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
     const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size', supportsAllDrives: true });
     res.status(201).json(response.data);
   } catch (error) { res.status(500).json({ message: 'Google Drive upload failed', error: error.message }); }
+});
+
+app.use((error, _req, res, _next) => {
+  console.error('API request failed:', error.message);
+  if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ message: 'Request body is not valid JSON' });
+  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'File must be 4 MB or smaller' });
+  res.status(500).json({ message: 'Unexpected server error', error: error.message });
 });
 
 let bootstrapPromise;
