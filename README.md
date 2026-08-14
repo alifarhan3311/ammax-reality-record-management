@@ -37,6 +37,8 @@ On Vercel, checklist uploads are limited to 4 MB per file because files pass thr
 
 The React SPA is served from `client/dist`, while `/api/*` is handled by the Vercel serverless Express function in `api/index.js`.
 
+If Vercel reports `FUNCTION_INVOCATION_TIMEOUT`, verify that `MONGO_URI` is an Atlas URI with the database name, its username/password are current and URL-encoded, and Atlas Network Access permits Vercel. Database connection attempts fail with a JSON `503` response after five seconds instead of hanging until the platform timeout.
+
 ## Authentication and access control
 
 - Public signup always creates a normal `user`; it can never create an admin.

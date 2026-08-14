@@ -6,6 +6,7 @@ export default async function handler(req, res) {
     await bootstrapAdmin();
     return app(req, res);
   } catch (error) {
-    return res.status(503).json({ message: 'Database connection failed', error: error.message });
+    console.error('Serverless initialization failed:', error.message);
+    return res.status(503).json({ message: 'Service initialization failed. Check MongoDB Atlas and Vercel environment variables.', error: error.message });
   }
 }

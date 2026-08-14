@@ -20,7 +20,13 @@ let connectionPromise;
 export const connectDatabase = async () => {
   if (mongoose.connection.readyState === 1) return mongoose.connection;
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not configured');
-  if (!connectionPromise) connectionPromise = mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 10000 }).catch(error => { connectionPromise = undefined; throw error; });
+  if (!connectionPromise) connectionPromise = mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000,
+    socketTimeoutMS: 15000,
+    maxPoolSize: 5,
+    minPoolSize: 0
+  }).catch(error => { connectionPromise = undefined; throw error; });
   await connectionPromise;
   return mongoose.connection;
 };
@@ -143,7 +149,8 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
   } catch (error) { res.status(500).json({ message: 'Google Drive upload failed', error: error.message }); }
 });
 
-export const bootstrapAdmin = async () => {
+let bootstrapPromise;
+const performAdminBootstrap = async () => {
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(); const password = String(process.env.ADMIN_PASSWORD || '');
   if (!email || !password) return null;
   let admin = await User.findOne({ email });
@@ -151,6 +158,10 @@ export const bootstrapAdmin = async () => {
   else if (admin.role !== 'admin') { admin.role = 'admin'; await admin.save(); }
   await Transaction.updateMany({ createdBy: { $exists: false } }, { $set: { createdBy: admin._id } });
   return admin;
+};
+export const bootstrapAdmin = async () => {
+  if (!bootstrapPromise) bootstrapPromise = performAdminBootstrap().catch(error => { bootstrapPromise = undefined; throw error; });
+  return bootstrapPromise;
 };
 
 export default app;
