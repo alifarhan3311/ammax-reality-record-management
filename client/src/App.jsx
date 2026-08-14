@@ -7,6 +7,14 @@ const emptyForm = {
   acceptanceDate: '', dealNumber: '', email: '', seller: '', reviewer: '',
   yearBuilt: '', type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: ''
 };
+const cleanNumberInput = value => String(value ?? '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+const formatNumberInput = value => {
+  const clean = cleanNumberInput(value);
+  if (!clean) return '';
+  const [integer, decimals] = clean.split('.');
+  const grouped = (integer || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return decimals === undefined ? grouped : `${grouped}.${decimals}`;
+};
 
 const fields = [
   ['address', 'Address', 'textarea', '32 Kirkpatrick St, Kirkland Lake, ON P2N 2H1'],
@@ -112,9 +120,9 @@ function TransactionEditForm({ transaction, onUpdated }) {
       <label><span>Province <b>*</b></span><select value={form.province} onChange={e => update('province', e.target.value)} required><option value="">Select province</option><option>Ontario</option><option>Alberta</option><option>British Columbia</option><option>Manitoba</option><option>New Brunswick</option><option>Newfoundland and Labrador</option><option>Nova Scotia</option><option>Prince Edward Island</option><option>Quebec</option><option>Saskatchewan</option></select></label>
       {input('City', 'city', 'text', true)}{input('County', 'county')}{input('Co-Buyer Agent', 'coBuyerAgent')}
       <label><span>Type (Representation) <b>*</b></span><select value={form.type} onChange={e => update('type', e.target.value)} required><option>Purchase</option><option>Sale</option><option>Lease</option></select></label>
-      {input('Sale Price', 'salePrice', 'number', true)}{input('Year Built', 'yearBuilt')}
+      <label><span>Sale Price <b>*</b></span><input inputMode="decimal" value={formatNumberInput(form.salePrice)} onChange={e => update('salePrice', cleanNumberInput(e.target.value))} required /></label>{input('Year Built', 'yearBuilt')}
       <label><span>Source</span><select value={form.source} onChange={e => update('source', e.target.value)}><option value="">Select</option><option>Referral</option><option>Website</option><option>Repeat Client</option><option>Walk-in</option><option>Other</option></select></label>
-      {input('Deal Number', 'dealNumber')}
+      {input('Deal Number', 'dealNumber', 'text', false, true)}
       <div className="address-pair"><label><span>Office Lead</span><select value={form.officeLead} onChange={e => update('officeLead', e.target.value)}><option value="">Select</option><option>Yes</option><option>No</option></select></label>{input('File ID', 'fileId')}</div>
       {input('Subject Removal Date', 'subjectRemovalDate', 'date')}
       {input('Acceptance Date', 'acceptanceDate', 'date', true)}{input('Closing Date', 'closeOfDeal', 'date', true)}
@@ -124,11 +132,11 @@ function TransactionEditForm({ transaction, onUpdated }) {
   </form>;
 }
 
-const contactCategories = ['Seller / Landlord', 'Buyer / Tenant', 'Lawyer Information', 'Agent Representing Other Side', 'Lender', 'Home Warranty', 'Transaction Coordinator', 'Misc. Contact'];
+const contactCategories = ['Seller / Landlord', 'Buyer / Tenant', 'Lawyer Information', 'Agent Representing Other Side', 'Transaction Coordinator'];
 const blankContact = { entity: false, firstName: '', lastName: '', companyName: '', email: '', streetNumber: '', streetName: '', postalCode: '', city: '', province: '', fax: '', phone: '', alternatePhone: '', notes: '', forwardingAddress: '' };
 const contactKey = category => category.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 
-function ContactsForm({ transaction, onUpdated }) {
+function LegacyContactsForm({ transaction, onUpdated }) {
   const [category, setCategory] = useState(contactCategories[0]);
   const [contacts, setContacts] = useState(transaction.contacts || {});
   const [search, setSearch] = useState('');
@@ -204,6 +212,82 @@ function ContactsForm({ transaction, onUpdated }) {
         <label className="contact-wide"><span>Notes</span><textarea value={data.notes} onChange={e => update('notes', e.target.value)} /></label>
         <label className="contact-wide"><span>Forwarding Address</span><textarea value={data.forwardingAddress} onChange={e => update('forwardingAddress', e.target.value)} /></label>
       </div>
+      <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${category}`}</button></div>
+    </form>
+  </div>;
+}
+
+function ContactsForm({ transaction, onUpdated }) {
+  const [category, setCategory] = useState(contactCategories[0]);
+  const [contacts, setContacts] = useState(transaction.contacts || {});
+  const [searches, setSearches] = useState({});
+  const [results, setResults] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const key = contactKey(category);
+  const sellerNames = transaction.seller?.trim().split(/\s+/) || [];
+  const initialSeller = key === 'seller_landlord' ? { firstName: sellerNames.slice(0, -1).join(' '), lastName: sellerNames.at(-1) || '', email: transaction.email || '' } : {};
+  const stored = contacts[key];
+  const entries = (Array.isArray(stored) ? stored : stored ? [stored] : [{ ...blankContact, ...initialSeller }]).map(contact => ({ ...blankContact, ...contact }));
+  const setEntries = next => setContacts(current => ({ ...current, [key]: next }));
+  const update = (index, name, value) => setEntries(entries.map((contact, position) => position === index ? { ...contact, [name]: value } : contact));
+  const addContact = () => setEntries([...entries, { ...blankContact }]);
+  const removeContact = index => setEntries(entries.filter((_, position) => position !== index));
+  const copyAddress = index => {
+    const parts = transaction.address?.split(',').map(part => part.trim()) || [];
+    const street = (parts[0] || '').match(/^(\d+[A-Za-z-]*)\s+(.*)$/);
+    setEntries(entries.map((contact, position) => position === index ? { ...contact, streetNumber: street?.[1] || '', streetName: street?.[2] || parts[0] || '', city: parts[1] || '', province: parts[2] || '' } : contact));
+  };
+  const searchContacts = async (index, value) => {
+    setSearches(current => ({ ...current, [index]: value }));
+    if (value.trim().length < 2) return setResults(current => ({ ...current, [index]: [] }));
+    try {
+      const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(value.trim())}`);
+      const result = await readApiResponse(response);
+      if (!response.ok) throw new Error(result.message || 'Contact search failed');
+      setResults(current => ({ ...current, [index]: result }));
+    } catch (error) { setMessage(error.message); }
+  };
+  const selectContact = (index, result) => {
+    setEntries(entries.map((contact, position) => position === index ? { ...blankContact, ...result.contact } : contact));
+    setSearches(current => ({ ...current, [index]: '' }));
+    setResults(current => ({ ...current, [index]: [] }));
+  };
+  const save = async event => {
+    event.preventDefault(); setSaving(true); setMessage('');
+    const finalContacts = { ...contacts, [key]: entries };
+    try {
+      const response = await fetch(`/api/transactions/${transaction._id}/contacts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: finalContacts }) });
+      const result = await readApiResponse(response);
+      if (!response.ok) throw new Error(result.message || 'Could not save contacts');
+      setContacts(result.contacts || finalContacts); onUpdated(result); setMessage('Contacts saved successfully.');
+    } catch (error) { setMessage(error.message); }
+    finally { setSaving(false); }
+  };
+  const prefix = category === 'Seller / Landlord' ? 'Seller' : category === 'Buyer / Tenant' ? 'Buyer' : 'Contact';
+  return <div className="contacts-layout">
+    <aside className="contact-sidebar">{contactCategories.map(item => <button className={category === item ? 'active' : ''} onClick={() => { setCategory(item); setMessage(''); setSearches({}); setResults({}); }} key={item}>{item}</button>)}</aside>
+    <form className="contact-form" onSubmit={save}>
+      <div className="contact-form-heading"><div><span className="eyebrow">{category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
+      {entries.map((data, index) => <section className="contact-entry" key={`${key}-${index}`}>
+        <div className="contact-entry-heading"><h3>{prefix} {index + 1}</h3>{index > 0 && <button className="remove-contact" type="button" onClick={() => removeContact(index)}><Trash2 size={15}/> Remove</button>}</div>
+        <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17}/><input value={searches[index] || ''} onChange={event => searchContacts(index, event.target.value)} placeholder="Search by name, email, phone or company" /></div>{(results[index] || []).length > 0 && <div className="contact-search-results">{results[index].map(result => <button type="button" key={`${result.id}-${index}`} onClick={() => selectContact(index, result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}</div>
+        <div className="or-divider"><span>Or Enter New Contact</span></div>
+        <label className="check-field"><input type="checkbox" checked={data.entity} onChange={event => update(index, 'entity', event.target.checked)} /><span>{prefix} is a trust, company, or other entity</span></label>
+        <div className="contact-fields">
+          <label><span>{prefix}'s First Name <b>*</b></span><input value={data.firstName} onChange={e => update(index, 'firstName', e.target.value)} required={!data.entity} /></label><label><span>{prefix}'s Last Name <b>*</b></span><input value={data.lastName} onChange={e => update(index, 'lastName', e.target.value)} required={!data.entity} /></label>
+          <label><span>Company Name</span><input value={data.companyName} onChange={e => update(index, 'companyName', e.target.value)} /></label><label><span>E-mail</span><input type="email" value={data.email} onChange={e => update(index, 'email', e.target.value)} /></label>
+        </div>
+        <button className="copy-address" type="button" onClick={() => copyAddress(index)}>Copy property address to {prefix.toLowerCase()}'s address</button>
+        <div className="contact-fields">
+          <label><span>Street Number</span><input value={data.streetNumber} onChange={e => update(index, 'streetNumber', e.target.value)} /></label><label><span>Street Name</span><input value={data.streetName} onChange={e => update(index, 'streetName', e.target.value)} /></label>
+          <label><span>Postal Code</span><input value={data.postalCode} onChange={e => update(index, 'postalCode', e.target.value)} /></label><label><span>City</span><input value={data.city} onChange={e => update(index, 'city', e.target.value)} /></label>
+          <label><span>Province</span><input value={data.province} onChange={e => update(index, 'province', e.target.value)} /></label><label><span>Fax</span><input value={data.fax} onChange={e => update(index, 'fax', e.target.value)} /></label>
+          <label><span>Phone</span><input value={data.phone} onChange={e => update(index, 'phone', e.target.value)} /></label><label><span>Alternate Phone</span><input value={data.alternatePhone} onChange={e => update(index, 'alternatePhone', e.target.value)} /></label>
+          <label className="contact-wide"><span>Notes</span><textarea value={data.notes} onChange={e => update(index, 'notes', e.target.value)} /></label><label className="contact-wide"><span>Forwarding Address</span><textarea value={data.forwardingAddress} onChange={e => update(index, 'forwardingAddress', e.target.value)} /></label>
+        </div>
+      </section>)}
+      <button className="add-contact-button" type="button" onClick={addContact}>+ Add Another {prefix}</button>
       <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${category}`}</button></div>
     </form>
   </div>;
@@ -360,7 +444,7 @@ function TransactionModal({ onClose, onCreated }) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const change = e => setForm({ ...form, [e.target.name]: e.target.value });
+  const change = e => setForm({ ...form, [e.target.name]: e.target.name === 'salePrice' ? cleanNumberInput(e.target.value) : e.target.value });
   const submit = async e => {
     e.preventDefault(); setSaving(true); setError('');
     try {
@@ -379,7 +463,9 @@ function TransactionModal({ onClose, onCreated }) {
         <div className="form-grid">
           {fields.map(([name, label, type, options]) => <label className={type === 'textarea' ? 'wide' : ''} key={name}>
             <span>{label}{['address','agent','buyer','email'].includes(name) && <b> *</b>}</span>
-            {type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
+            {name === 'dealNumber' ? <input value="Assigned automatically" readOnly />
+              : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
+              : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
               : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
               : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address','agent','buyer','email'].includes(name)} />}
           </label>)}

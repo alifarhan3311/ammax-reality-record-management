@@ -10,6 +10,7 @@ import { Readable } from 'node:stream';
 import { createPrivateKey } from 'node:crypto';
 import Transaction from './models/Transaction.js';
 import User from './models/User.js';
+import Counter from './models/Counter.js';
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -58,6 +59,29 @@ const requireAuth = async (req, res, next) => {
   } catch { res.status(401).json({ message: 'Session expired. Please sign in again.' }); }
 };
 const ownerFilter = (req, id) => req.user.role === 'admin' ? { _id: id } : { _id: id, createdBy: req.user._id };
+const dealCounterId = 'transaction-deal-number';
+const initializeDealNumbers = async () => {
+  const existingCounter = await Counter.findById(dealCounterId);
+  if (existingCounter) return existingCounter;
+  try {
+    await Counter.create({ _id: dealCounterId, seq: 0 });
+    const transactions = await Transaction.find({}).sort({ createdAt: 1, _id: 1 }).select('_id');
+    if (transactions.length) {
+      await Transaction.bulkWrite(transactions.map((transaction, index) => ({
+        updateOne: { filter: { _id: transaction._id }, update: { $set: { dealNumber: String(index + 1) } } }
+      })));
+    }
+    return Counter.findByIdAndUpdate(dealCounterId, { $set: { seq: transactions.length } }, { new: true });
+  } catch (error) {
+    if (error.code === 11000) return Counter.findById(dealCounterId);
+    throw error;
+  }
+};
+const nextDealNumber = async () => {
+  await initializeDealNumbers();
+  const counter = await Counter.findByIdAndUpdate(dealCounterId, { $inc: { seq: 1 } }, { new: true });
+  return String(counter.seq);
+};
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.name, authConfigured: Boolean(process.env.JWT_SECRET) }));
 app.post('/api/auth/signup', async (req, res) => {
@@ -99,14 +123,18 @@ app.get('/api/contacts/search', requireAuth, async (req, res) => {
     const transactions = await Transaction.find(filter).select('address contacts createdBy').lean();
     const seen = new Set(); const results = [];
     for (const transaction of transactions) {
-      for (const [category, contact] of Object.entries(transaction.contacts || {})) {
+      for (const [category, storedContacts] of Object.entries(transaction.contacts || {})) {
+        const categoryContacts = Array.isArray(storedContacts) ? storedContacts : [storedContacts];
+        for (const [contactIndex, contact] of categoryContacts.entries()) {
         if (!contact || typeof contact !== 'object') continue;
         const searchable = [contact.firstName, contact.lastName, contact.companyName, contact.email, contact.phone, contact.city].filter(Boolean).join(' ').toLowerCase();
         if (!searchable.includes(query)) continue;
         const signature = [contact.email?.toLowerCase(), contact.phone, contact.firstName?.toLowerCase(), contact.lastName?.toLowerCase()].filter(Boolean).join('|');
         if (signature && seen.has(signature)) continue;
         if (signature) seen.add(signature);
-        results.push({ id: `${transaction._id}:${category}`, category, transactionAddress: transaction.address, contact });
+        results.push({ id: `${transaction._id}:${category}:${contactIndex}`, category, transactionAddress: transaction.address, contact });
+        if (results.length === 15) break;
+        }
         if (results.length === 15) break;
       }
       if (results.length === 15) break;
@@ -121,12 +149,12 @@ app.get('/api/transactions/:id', requireAuth, async (req, res) => {
 app.post('/api/transactions', requireAuth, async (req, res) => {
   const { address, agent, buyer, email } = req.body;
   if (![address, agent, buyer, email].every(value => typeof value === 'string' && value.trim())) return res.status(400).json({ message: 'Address, agent, buyer and email are required' });
-  try { res.status(201).json(await Transaction.create({ ...req.body, createdBy: req.user._id })); }
+  try { res.status(201).json(await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(), createdBy: req.user._id })); }
   catch (error) { res.status(500).json({ message: 'Could not create transaction', error: error.message }); }
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'reviewer', 'yearBuilt', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'source', 'officeLead', 'fileId', 'actualClosingDate'];
+    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'email', 'seller', 'reviewer', 'yearBuilt', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'source', 'officeLead', 'fileId', 'actualClosingDate'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
     const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: updates }, { new: true, runValidators: true });
     if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
@@ -252,6 +280,7 @@ app.use((error, _req, res, _next) => {
 let bootstrapPromise;
 const performAdminBootstrap = async () => {
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(); const password = String(process.env.ADMIN_PASSWORD || '');
+  await initializeDealNumbers();
   if (!email || !password) return null;
   let admin = await User.findOne({ email });
   if (!admin) admin = await User.create({ name: process.env.ADMIN_NAME || 'AMMAX Administrator', email, passwordHash: await bcrypt.hash(password, 12), role: 'admin' });
