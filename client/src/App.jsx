@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
 
@@ -265,12 +265,18 @@ const checklistDocuments = [
   ['Fintrac ID', 'Required'], ['Copy of Deposit/Receipt', 'Incomplete'], ['Receipt of Funds (Fintrac)', 'Required'],
   ['Waivers', 'Incomplete'], ['Amendment', 'If Applicable'], ['Survey', 'If Applicable'], ['Water Test', 'If Applicable'],
   ['Septic Receipt', 'If Applicable'], ['MLS Printout', 'If Applicable'], ['Signed Trades (Admin Use Only)', 'Required'],
-  ['Mutual Release', 'If Applicable'], ['Registrant Disclosure', 'If Applicable']
+  ['Mutual Release', 'If Applicable'], ['Registrant Disclosure', 'If Applicable'], ['RECO', 'Required'],
+  ['Listing Agreement', 'Required'], ['MLS Data', 'Required'], ['RECO', 'Required']
 ];
 const defaultChecklist = () => checklistDocuments.map(([documentation, status], index) => ({ id: index + 1, documentation, status, comments: '', attachment: '' }));
+const checklistWithDefaults = checklist => {
+  const savedRows = Array.isArray(checklist) ? checklist : [];
+  const savedById = new Map(savedRows.map(row => [String(row.id), row]));
+  return defaultChecklist().map(defaultRow => ({ ...defaultRow, ...(savedById.get(String(defaultRow.id)) || {}) }));
+};
 
 function ChecklistForm({ transaction, onUpdated }) {
-  const [rows, setRows] = useState(transaction.checklist?.length ? transaction.checklist : defaultChecklist());
+  const [rows, setRows] = useState(() => checklistWithDefaults(transaction.checklist));
   const [pendingFiles, setPendingFiles] = useState({});
   const [filter, setFilter] = useState('All Statuses');
   const [saving, setSaving] = useState(false);
@@ -304,13 +310,16 @@ function ChecklistForm({ transaction, onUpdated }) {
   return <div className="checklist-form">
     <div className="checklist-heading"><div><span className="eyebrow">Compliance Documents</span><h2>Sales Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
     <div className="checklist-table-wrap"><table className="checklist-table"><thead><tr><th>#</th><th>Documentation</th><th>Status</th><th>Docs</th><th>Comments</th><th>Attachment</th></tr></thead><tbody>
-      {visibleRows.map(row => <tr key={row.id}>
-        <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
-        <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
-        <td>{row.driveFileId ? <a className="drive-link" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer" title="Open document">📎</a> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
-        <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-        <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id] ? 'Replace' : 'Attach'}<input type="file" onChange={e => { const file = e.target.files[0]; if (file) { setPendingFiles(current => ({ ...current, [row.id]: file })); update(row.id, 'attachment', file.name); } }} /></label>{row.driveFileId && <a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer">View</a>}</div>{(pendingFiles[row.id]?.name || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.name || row.attachment}</span>}</td>
-      </tr>)}
+      {visibleRows.map(row => <Fragment key={row.id}>
+        {Number(row.id) === 17 && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
+        <tr>
+          <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
+          <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
+          <td>{row.driveFileId ? <a className="drive-link" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer" title="Open document">📎</a> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
+          <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
+          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id] ? 'Replace' : 'Attach'}<input type="file" onChange={e => { const file = e.target.files[0]; if (file) { setPendingFiles(current => ({ ...current, [row.id]: file })); update(row.id, 'attachment', file.name); } }} /></label>{row.driveFileId && <a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer">View</a>}</div>{(pendingFiles[row.id]?.name || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.name || row.attachment}</span>}</td>
+        </tr>
+      </Fragment>)}
     </tbody></table></div>
     <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Checklist'}</button></div>
   </div>;
