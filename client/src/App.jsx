@@ -297,7 +297,17 @@ const blankCommission = { salePrice: '', personalDeal: 'no', listingCommissionPe
 const money = value => value === '' || value === null || value === undefined ? '' : Number(value).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 
 function CommissionForm({ transaction, onUpdated }) {
-  const [form, setForm] = useState({ ...blankCommission, salePrice: transaction.salePrice || '', ...(transaction.commission || {}) });
+  const [form, setForm] = useState(() => {
+    const savedCommission = transaction.commission || {};
+    const savedSplits = Array.isArray(savedCommission.splits) ? savedCommission.splits : [];
+    const agentNames = [transaction.agent, transaction.coBuyerAgent].filter(name => String(name || '').trim());
+    const splits = agentNames.map(name => {
+      const saved = savedSplits.find(split => split.name === name);
+      return { name, amount: saved?.amount || '', percentage: saved?.percentage || '' };
+    });
+    const comments = Array.isArray(savedCommission.comments) ? savedCommission.comments : savedCommission.instructions?.trim() ? [{ text: savedCommission.instructions.trim(), createdAt: transaction.updatedAt }] : [];
+    return { ...blankCommission, salePrice: transaction.salePrice || '', ...savedCommission, instructions: '', comments, splits };
+  });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const update = (name, value) => {
@@ -319,6 +329,13 @@ function CommissionForm({ transaction, onUpdated }) {
     finally { setSaving(false); }
   };
   const currencyFields = ['salePrice', 'officeGrossCommission', 'adminBrokerageComp', 'otherDeductions', 'depositAmount', 'referralAmount'];
+  const updateSplit = (index, name, value) => setForm(current => ({ ...current, splits: current.splits.map((split, position) => position === index ? { ...split, [name]: value } : split) }));
+  const addCommissionComment = () => {
+    const text = form.instructions.trim();
+    if (!text) return setMessage('Please enter a comment first.');
+    setForm(current => ({ ...current, instructions: '', comments: [...(current.comments || []), { text, createdAt: new Date().toISOString() }] }));
+    setMessage('Comment added successfully. Save Commission to store it.');
+  };
   const field = (label, name, type = 'number', required = false, readOnly = false) => {
     const isCurrency = currencyFields.includes(name);
     return <label><span>{label}{required && <b> *</b>}</span><input type={isCurrency ? 'text' : type} inputMode={isCurrency ? 'decimal' : undefined} step={!isCurrency && type === 'number' ? '0.01' : undefined} value={isCurrency ? formatNumberInput(form[name]) : form[name]} onChange={e => update(name, isCurrency ? cleanNumberInput(e.target.value) : e.target.value)} required={required} readOnly={readOnly} /></label>;
@@ -343,7 +360,15 @@ function CommissionForm({ transaction, onUpdated }) {
       <div className="commission-three"><label><span>Referral Type</span><select value={form.referralType} onChange={e => update('referralType', e.target.value)}><option value="">Select</option><option>Incoming</option><option>Outgoing</option><option>Internal</option></select></label>{field('Referral Agent', 'referralAgent', 'text')}{field('Referral Brokerage Name', 'referralBrokerageName', 'text')}</div>
       <div className="commission-three referral-row">{field('Referral Amount', 'referralAmount')} {field('Referral Percentage', 'referralPercent')}<label><span>Supporting Document (PDF only)</span><input className="file-input" type="file" accept="application/pdf" onChange={e => update('supportingDocument', e.target.files[0]?.name || '')} />{form.supportingDocument && <small>{form.supportingDocument}</small>}</label></div>
     </section>
-    <section className="commission-section"><div className="section-heading"><h2>Commission Instructions</h2></div><label className="instruction-field"><span>Additional Commission Breakdown Information</span><textarea value={form.instructions} onChange={e => update('instructions', e.target.value)} /></label></section>
+    <section className="commission-section"><div className="section-heading"><h2>Commission Instructions</h2></div><label className="instruction-field"><span>Additional Commission Breakdown Information</span><textarea value={form.instructions} onChange={e => update('instructions', e.target.value)} placeholder="Write a comment" /></label><div className="comment-add-row"><button className="secondary add-comment-button" type="button" onClick={addCommissionComment}>+ Add Comment</button></div>{form.comments?.length > 0 && <div className="commission-comments">{[...form.comments].reverse().map((comment, index) => <article className="commission-comment" key={`${comment.createdAt}-${index}`}><p>{comment.text}</p><time>{new Date(comment.createdAt).toLocaleString('en-CA', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></article>)}</div>}</section>
+    <section className="commission-section commission-split-section"><div className="section-heading"><span className="eyebrow">Agent Distribution</span><h2>Commission Split</h2></div>
+      <div className="commission-split-head"><span>Agent Name</span><span>Currency Amount</span><span>Percentage</span></div>
+      {form.splits.map((split, index) => <div className="commission-split-row" key={`${split.name}-${index}`}>
+        <label><span>Agent Name</span><input value={split.name} readOnly /></label>
+        <label><span>Currency Amount</span><input inputMode="decimal" value={formatNumberInput(split.amount)} onChange={e => updateSplit(index, 'amount', cleanNumberInput(e.target.value))} placeholder="0.00" /></label>
+        <label><span>Percentage</span><div className="percentage-input"><input type="number" min="0" max="100" step="0.01" value={split.percentage} onChange={e => updateSplit(index, 'percentage', e.target.value)} placeholder="0" /><b>%</b></div></label>
+      </div>)}
+    </section>
     <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Commission'}</button></div>
   </form>;
 }
