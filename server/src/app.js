@@ -21,6 +21,7 @@ export const connectDatabase = async () => {
   if (mongoose.connection.readyState === 1) return mongoose.connection;
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is not configured');
   if (!connectionPromise) connectionPromise = mongoose.connect(process.env.MONGO_URI, {
+    dbName: 'ammax-records',
     serverSelectionTimeoutMS: 5000,
     connectTimeoutMS: 5000,
     socketTimeoutMS: 15000,
@@ -90,6 +91,29 @@ app.get('/api/transactions', requireAuth, async (req, res) => {
     res.json(await Transaction.find(filter).populate('createdBy', 'name email role').sort({ createdAt: -1 }).lean());
   } catch (error) { res.status(500).json({ message: 'Could not load transactions', error: error.message }); }
 });
+app.get('/api/contacts/search', requireAuth, async (req, res) => {
+  try {
+    const query = String(req.query.q || '').trim().toLowerCase();
+    if (query.length < 2) return res.json([]);
+    const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
+    const transactions = await Transaction.find(filter).select('address contacts createdBy').lean();
+    const seen = new Set(); const results = [];
+    for (const transaction of transactions) {
+      for (const [category, contact] of Object.entries(transaction.contacts || {})) {
+        if (!contact || typeof contact !== 'object') continue;
+        const searchable = [contact.firstName, contact.lastName, contact.companyName, contact.email, contact.phone, contact.city].filter(Boolean).join(' ').toLowerCase();
+        if (!searchable.includes(query)) continue;
+        const signature = [contact.email?.toLowerCase(), contact.phone, contact.firstName?.toLowerCase(), contact.lastName?.toLowerCase()].filter(Boolean).join('|');
+        if (signature && seen.has(signature)) continue;
+        if (signature) seen.add(signature);
+        results.push({ id: `${transaction._id}:${category}`, category, transactionAddress: transaction.address, contact });
+        if (results.length === 15) break;
+      }
+      if (results.length === 15) break;
+    }
+    res.json(results);
+  } catch (error) { res.status(500).json({ message: 'Could not search contacts', error: error.message }); }
+});
 app.get('/api/transactions/:id', requireAuth, async (req, res) => {
   try { const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('createdBy', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not load transaction' }); }
@@ -109,7 +133,23 @@ app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not update transaction', error: error.message }); }
 });
 app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
-  try { const record = await Transaction.findOneAndDelete(ownerFilter(req, req.params.id)); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json({ message: 'Transaction deleted successfully', id: record._id }); }
+  try {
+    const record = await Transaction.findOne(ownerFilter(req, req.params.id));
+    if (!record) return res.status(404).json({ message: 'Transaction not found' });
+    const driveFileIds = [...new Set((record.checklist || []).map(item => item?.driveFileId).filter(Boolean))];
+    const driveWarnings = [];
+    if (driveFileIds.length) {
+      try {
+        const { drive } = driveClient();
+        for (const fileId of driveFileIds) {
+          try { await drive.files.delete({ fileId, supportsAllDrives: true }); }
+          catch (error) { if (error.code !== 404) driveWarnings.push(`${fileId}: ${error.message}`); }
+        }
+      } catch (error) { driveWarnings.push(error.message); }
+    }
+    await record.deleteOne();
+    res.json({ message: 'Transaction deleted successfully', id: record._id, deletedDriveFiles: driveFileIds.length - driveWarnings.length, driveWarnings });
+  }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not delete transaction' }); }
 });
 

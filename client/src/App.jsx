@@ -132,12 +132,33 @@ function ContactsForm({ transaction, onUpdated }) {
   const [category, setCategory] = useState(contactCategories[0]);
   const [contacts, setContacts] = useState(transaction.contacts || {});
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const key = contactKey(category);
   const sellerNames = transaction.seller?.trim().split(/\s+/) || [];
   const initialSeller = key === 'seller_landlord' ? { firstName: sellerNames.slice(0, -1).join(' '), lastName: sellerNames.at(-1) || '', email: transaction.email || '' } : {};
   const data = { ...blankContact, ...initialSeller, ...(contacts[key] || {}) };
+  useEffect(() => {
+    if (search.trim().length < 2) { setSearchResults([]); setSearching(false); return; }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(search.trim())}`, { signal: controller.signal });
+        const result = await readApiResponse(response);
+        if (!response.ok) throw new Error(result.message || 'Contact search failed');
+        setSearchResults(result);
+      } catch (error) { if (error.name !== 'AbortError') setMessage(error.message); }
+      finally { setSearching(false); }
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [search]);
+  const selectContact = result => {
+    setContacts(current => ({ ...current, [key]: { ...blankContact, ...result.contact } }));
+    setSearch(''); setSearchResults([]); setMessage(`Contact loaded from ${result.transactionAddress}.`);
+  };
   const update = (name, value) => setContacts(current => ({ ...current, [key]: { ...data, [name]: value } }));
   const copyAddress = () => {
     const addressParts = transaction.address?.split(',').map(part => part.trim()) || [];
@@ -161,7 +182,7 @@ function ContactsForm({ transaction, onUpdated }) {
     <aside className="contact-sidebar">{contactCategories.map(item => <button className={category === item ? 'active' : ''} onClick={() => { setCategory(item); setMessage(''); }} key={item}>{item}</button>)}</aside>
     <form className="contact-form" onSubmit={save}>
       <div className="contact-form-heading"><div><span className="eyebrow">{category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
-      <label className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search existing contacts" /></div></label>
+      <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by name, email, phone or company" />{searching && <small>Searching…</small>}</div>{searchResults.length > 0 && <div className="contact-search-results">{searchResults.map(result => <button type="button" key={result.id} onClick={() => selectContact(result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}{search.trim().length >= 2 && !searching && searchResults.length === 0 && <div className="contact-search-empty">No matching saved contact</div>}</div>
       <div className="or-divider"><span>Or Enter New Contact</span></div>
       <label className="check-field"><input type="checkbox" checked={data.entity} onChange={event => update('entity', event.target.checked)} /><span>{labelPrefix} is a trust, company, or other entity</span></label>
       <div className="contact-fields">
