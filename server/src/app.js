@@ -161,10 +161,11 @@ app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not update transaction', error: error.message }); }
 });
 app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Only administrators can delete transactions' });
   try {
     const record = await Transaction.findOne(ownerFilter(req, req.params.id));
     if (!record) return res.status(404).json({ message: 'Transaction not found' });
-    const driveFileIds = [...new Set((record.checklist || []).map(item => item?.driveFileId).filter(Boolean))];
+    const driveFileIds = [...new Set((record.checklist || []).flatMap(item => [item?.driveFileId, ...(item?.documents || []).map(document => document?.driveFileId)].filter(Boolean)))];
     const driveWarnings = [];
     if (driveFileIds.length) {
       try {
@@ -191,7 +192,7 @@ for (const section of ['contacts', 'commission', 'checklist']) {
   });
 }
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
 const driveClient = () => {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
@@ -270,10 +271,39 @@ app.get('/api/transactions/:id/checklist/:itemId/document', requireAuth, async (
   }
 });
 
+app.get('/api/transactions/:id/checklist/:itemId/document/:fileId', requireAuth, async (req, res) => {
+  try {
+    const transaction = await Transaction.findOne(ownerFilter(req, req.params.id)).lean();
+    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+    const item = (transaction.checklist || []).find(row => String(row?.id) === String(req.params.itemId));
+    const allowedFileIds = [item?.driveFileId, ...(item?.documents || []).map(document => document?.driveFileId)].filter(Boolean).map(String);
+    if (!allowedFileIds.includes(String(req.params.fileId))) return res.status(404).json({ message: 'Document not found' });
+
+    const { drive } = driveClient();
+    const metadata = await drive.files.get({ fileId: req.params.fileId, fields: 'id,name,mimeType,size', supportsAllDrives: true });
+    const fileResponse = await drive.files.get(
+      { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream', headers: req.headers.range ? { Range: req.headers.range } : undefined }
+    );
+    const safeName = String(metadata.data.name || 'document').replace(/[\r\n"\\]/g, '_');
+    res.status(fileResponse.status || 200);
+    res.setHeader('Content-Type', metadata.data.mimeType || fileResponse.headers['content-type'] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    for (const header of ['content-length', 'content-range', 'accept-ranges']) if (fileResponse.headers[header]) res.setHeader(header, fileResponse.headers[header]);
+    fileResponse.data.on('error', error => res.destroy(error));
+    fileResponse.data.pipe(res);
+  } catch (error) {
+    const status = error.code === 404 ? 404 : error.code === 403 ? 403 : 500;
+    if (!res.headersSent) res.status(status).json({ message: status === 404 ? 'Document no longer exists in Google Drive' : 'Could not open document', error: error.message });
+  }
+});
+
 app.use((error, _req, res, _next) => {
   console.error('API request failed:', error.message);
   if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ message: 'Request body is not valid JSON' });
-  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'File must be 4 MB or smaller' });
+  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'File must be 3 MB or smaller' });
   res.status(500).json({ message: 'Unexpected server error', error: error.message });
 });
 

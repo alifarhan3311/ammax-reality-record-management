@@ -70,7 +70,7 @@ function TransactionCard({ item, onDelete, showOwner }) {
     <div className="card-actions">
       <Link className="action-button view-action" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={18} /></Link>
       <Link className="action-button edit-action" to={`/transactions/${item._id || item.id}?edit=1`} aria-label={`Edit ${item.address}`} title="Edit transaction"><Pencil size={17} /></Link>
-      <button className="action-button delete-action" type="button" onClick={() => onDelete(item)} aria-label={`Delete ${item.address}`} title="Delete transaction"><Trash2 size={17} /></button>
+      {showOwner && <button className="action-button delete-action" type="button" onClick={() => onDelete(item)} aria-label={`Delete ${item.address}`} title="Delete transaction"><Trash2 size={17} /></button>}
     </div>
   </article>;
 }
@@ -318,7 +318,11 @@ function CommissionForm({ transaction, onUpdated }) {
     } catch (error) { setMessage(error.message); }
     finally { setSaving(false); }
   };
-  const field = (label, name, type = 'number', required = false, readOnly = false) => <label><span>{label}{required && <b> *</b>}</span><input type={type} step={type === 'number' ? '0.01' : undefined} value={form[name]} onChange={e => update(name, e.target.value)} required={required} readOnly={readOnly} /></label>;
+  const currencyFields = ['salePrice', 'officeGrossCommission', 'adminBrokerageComp', 'otherDeductions', 'depositAmount', 'referralAmount'];
+  const field = (label, name, type = 'number', required = false, readOnly = false) => {
+    const isCurrency = currencyFields.includes(name);
+    return <label><span>{label}{required && <b> *</b>}</span><input type={isCurrency ? 'text' : type} inputMode={isCurrency ? 'decimal' : undefined} step={!isCurrency && type === 'number' ? '0.01' : undefined} value={isCurrency ? formatNumberInput(form[name]) : form[name]} onChange={e => update(name, isCurrency ? cleanNumberInput(e.target.value) : e.target.value)} required={required} readOnly={readOnly} /></label>;
+  };
   return <form className="commission-form" onSubmit={save}>
     <section className="commission-section"><div className="section-heading"><span className="eyebrow">Financial Details</span><h2>Commission Info</h2></div>
       <div className="commission-grid">
@@ -372,11 +376,17 @@ function ChecklistForm({ transaction, onUpdated }) {
       let rowsToSave = [...rows];
       for (const [itemId, file] of Object.entries(pendingFiles)) {
         if (!file) continue;
+        if (file.size > 3 * 1024 * 1024) throw new Error(`${file.name}: File must be 3 MB or smaller`);
         const uploadData = new FormData(); uploadData.append('file', file);
         const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
-        const uploaded = await uploadResponse.json();
+        const uploaded = await readApiResponse(uploadResponse);
         if (!uploadResponse.ok) throw new Error(`${file.name}: ${uploaded.error || uploaded.message || 'Upload failed'}`);
-        rowsToSave = rowsToSave.map(row => String(row.id) === String(itemId) ? { ...row, attachment: uploaded.name, driveFileId: uploaded.id, driveUrl: uploaded.webViewLink, mimeType: uploaded.mimeType } : row);
+        rowsToSave = rowsToSave.map(row => {
+          if (String(row.id) !== String(itemId)) return row;
+          const legacyDocument = row.driveFileId && !(row.documents || []).some(document => document.driveFileId === row.driveFileId) ? [{ name: row.attachment, driveFileId: row.driveFileId, mimeType: row.mimeType }] : [];
+          const documents = [...legacyDocument, ...(row.documents || []), { name: uploaded.name, driveFileId: uploaded.id, mimeType: uploaded.mimeType }];
+          return { ...row, attachment: uploaded.name, driveFileId: uploaded.id, driveUrl: uploaded.webViewLink, mimeType: uploaded.mimeType, documents };
+        });
       }
       const response = await fetch(`/api/transactions/${transaction._id}/checklist`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: rows }) });
       const result = await response.json();
@@ -399,9 +409,9 @@ function ChecklistForm({ transaction, onUpdated }) {
         <tr>
           <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
           <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
-          <td>{row.driveFileId ? <a className="drive-link" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer" title="Open document">📎</a> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
+          <td>{row.driveFileId ? <span className="document-count">📎 {(row.documents || []).length || 1}</span> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
           <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id] ? 'Replace' : 'Attach'}<input type="file" onChange={e => { const file = e.target.files[0]; if (file) { setPendingFiles(current => ({ ...current, [row.id]: file })); update(row.id, 'attachment', file.name); } }} /></label>{row.driveFileId && <a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document`} target="_blank" rel="noreferrer">View</a>}</div>{(pendingFiles[row.id]?.name || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.name || row.attachment}</span>}</td>
+          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id] ? 'Replace' : 'Attach'}<input type="file" onChange={e => { const file = e.target.files[0]; if (file) { if (file.size > 3 * 1024 * 1024) { setMessage(`${file.name}: File must be 3 MB or smaller`); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: file })); } }} /></label>{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId }] : []).map((document, documentIndex) => <a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer" key={document.driveFileId}>View {documentIndex + 1}</a>)}</div>{(pendingFiles[row.id]?.name || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.name || row.attachment}</span>}</td>
         </tr>
       </Fragment>)}
     </tbody></table></div>
