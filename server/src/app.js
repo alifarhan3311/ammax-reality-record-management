@@ -205,6 +205,43 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
   }
 });
 
+app.get('/api/transactions/:id/checklist/:itemId/document', requireAuth, async (req, res) => {
+  try {
+    const transaction = await Transaction.findOne(ownerFilter(req, req.params.id)).lean();
+    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+    const item = (transaction.checklist || []).find(row => String(row?.id) === String(req.params.itemId));
+    if (!item?.driveFileId) return res.status(404).json({ message: 'Document not found' });
+
+    const { drive } = driveClient();
+    const metadata = await drive.files.get({ fileId: item.driveFileId, fields: 'id,name,mimeType,size', supportsAllDrives: true });
+    const fileResponse = await drive.files.get(
+      { fileId: item.driveFileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream', headers: req.headers.range ? { Range: req.headers.range } : undefined }
+    );
+    const safeName = String(metadata.data.name || item.attachment || 'document').replace(/[\r\n"\\]/g, '_');
+    res.status(fileResponse.status || 200);
+    res.setHeader('Content-Type', metadata.data.mimeType || fileResponse.headers['content-type'] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    for (const header of ['content-length', 'content-range', 'accept-ranges']) {
+      if (fileResponse.headers[header]) res.setHeader(header, fileResponse.headers[header]);
+    }
+    fileResponse.data.on('error', error => {
+      console.error('Google Drive stream failed:', error.message);
+      if (!res.headersSent) res.status(502).json({ message: 'Could not open document' });
+      else res.destroy(error);
+    });
+    fileResponse.data.pipe(res);
+  } catch (error) {
+    const status = error.code === 404 ? 404 : error.code === 403 ? 403 : 500;
+    if (!res.headersSent) res.status(status).json({
+      message: status === 404 ? 'Document no longer exists in Google Drive' : status === 403 ? 'Google Drive access was denied' : 'Could not open document',
+      error: error.message
+    });
+  }
+});
+
 app.use((error, _req, res, _next) => {
   console.error('API request failed:', error.message);
   if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ message: 'Request body is not valid JSON' });
