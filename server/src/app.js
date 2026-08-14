@@ -125,9 +125,17 @@ for (const section of ['contacts', 'commission', 'checklist']) {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 const driveClient = () => {
+  const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
+  const oauthRefreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
+  if (oauthClientId && oauthClientSecret && oauthRefreshToken && folderId) {
+    const auth = new google.auth.OAuth2(oauthClientId, oauthClientSecret);
+    auth.setCredentials({ refresh_token: oauthRefreshToken });
+    return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'oauth' };
+  }
   let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
   let privateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
   if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     try {
       const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
@@ -141,7 +149,7 @@ const driveClient = () => {
   try { createPrivateKey(privateKey); }
   catch { throw new Error('GOOGLE_PRIVATE_KEY is invalid or truncated. Copy the complete private_key value from the downloaded Google service-account JSON file'); }
   const auth = new google.auth.JWT({ email, key: privateKey, scopes: ['https://www.googleapis.com/auth/drive'] });
-  return { drive: google.drive({ version: 'v3', auth }), folderId };
+  return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'service-account' };
 };
 app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Please select a file' });
@@ -151,7 +159,10 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
     const { drive, folderId } = driveClient(); const safeAddress = (transaction.address || 'Transaction').replace(/[^a-z0-9 _-]/gi, '').slice(0, 60);
     const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size', supportsAllDrives: true });
     res.status(201).json(response.data);
-  } catch (error) { res.status(500).json({ message: 'Google Drive upload failed', error: error.message }); }
+  } catch (error) {
+    const quotaError = /service accounts do not have storage quota/i.test(error.message);
+    res.status(500).json({ message: quotaError ? 'This Google Drive folder requires OAuth user credentials or a Workspace Shared Drive.' : 'Google Drive upload failed', error: error.message });
+  }
 });
 
 app.use((error, _req, res, _next) => {

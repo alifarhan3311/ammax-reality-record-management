@@ -16,6 +16,8 @@ All transaction create, list, and detail requests persist to and load from Mongo
 
 Create a Google Cloud service account, enable Google Drive API, and share the target Drive folder with the service account email as Editor. Add `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, and `GOOGLE_DRIVE_FOLDER_ID` to `server/.env`. Checklist attachments are uploaded to that folder; the Drive file ID and link are saved in MongoDB.
 
+Service accounts cannot own files in a normal Gmail `My Drive` because they have no storage quota. For a normal My Drive folder, configure OAuth user credentials instead: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `GOOGLE_DRIVE_FOLDER_ID`. When all three OAuth values exist, OAuth mode is used automatically. Service-account mode should only be used with a Google Workspace Shared Drive or domain-wide delegation.
+
 On Vercel, checklist uploads are limited to 4 MB per file because files pass through a serverless function.
 
 ## Deploy to Vercel
