@@ -7,6 +7,7 @@ import mongoose from 'mongoose';
 import multer from 'multer';
 import { google } from 'googleapis';
 import { Readable } from 'node:stream';
+import { createPrivateKey } from 'node:crypto';
 import Transaction from './models/Transaction.js';
 import User from './models/User.js';
 
@@ -113,10 +114,23 @@ for (const section of ['contacts', 'commission', 'checklist']) {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 } });
 const driveClient = () => {
-  const { GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_DRIVE_FOLDER_ID } = process.env;
-  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY || !GOOGLE_DRIVE_FOLDER_ID) throw new Error('Google Drive credentials are not configured');
-  const auth = new google.auth.JWT({ email: GOOGLE_SERVICE_ACCOUNT_EMAIL, key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), scopes: ['https://www.googleapis.com/auth/drive'] });
-  return { drive: google.drive({ version: 'v3', auth }), folderId: GOOGLE_DRIVE_FOLDER_ID };
+  let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    try {
+      const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+      email ||= credentials.client_email;
+      privateKey ||= credentials.private_key;
+    } catch { throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON'); }
+  }
+  if (!email || !privateKey || !folderId) throw new Error('Google Drive credentials are incomplete');
+  privateKey = privateKey.replace(/^['"]|['"]$/g, '').replace(/\\n/g, '\n').replace(/\r/g, '').trim();
+  if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----') || !privateKey.includes('-----END PRIVATE KEY-----')) throw new Error('GOOGLE_PRIVATE_KEY must contain the complete private_key from the service-account JSON file');
+  try { createPrivateKey(privateKey); }
+  catch { throw new Error('GOOGLE_PRIVATE_KEY is invalid or truncated. Copy the complete private_key value from the downloaded Google service-account JSON file'); }
+  const auth = new google.auth.JWT({ email, key: privateKey, scopes: ['https://www.googleapis.com/auth/drive'] });
+  return { drive: google.drive({ version: 'v3', auth }), folderId };
 };
 app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Please select a file' });
@@ -124,7 +138,7 @@ app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.s
     const transaction = await Transaction.findOne(ownerFilter(req, req.params.id)).lean();
     if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
     const { drive, folderId } = driveClient(); const safeAddress = (transaction.address || 'Transaction').replace(/[^a-z0-9 _-]/gi, '').slice(0, 60);
-    const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size' });
+    const response = await drive.files.create({ requestBody: { name: `${safeAddress} - ${req.file.originalname}`, parents: [folderId] }, media: { mimeType: req.file.mimetype, body: Readable.from(req.file.buffer) }, fields: 'id,name,webViewLink,webContentLink,mimeType,size', supportsAllDrives: true });
     res.status(201).json(response.data);
   } catch (error) { res.status(500).json({ message: 'Google Drive upload failed', error: error.message }); }
 });
