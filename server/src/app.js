@@ -115,6 +115,32 @@ app.get('/api/transactions', requireAuth, async (req, res) => {
     res.json(await Transaction.find(filter).populate('createdBy', 'name email role').sort({ createdAt: -1 }).lean());
   } catch (error) { res.status(500).json({ message: 'Could not load transactions', error: error.message }); }
 });
+app.get('/api/transactions-export/excel', requireAuth, async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
+    const records = await Transaction.find(filter).populate('createdBy', 'name email').sort({ createdAt: 1 }).lean();
+    const columns = [
+      ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co-Buyer Agent', 'coBuyerAgent'],
+      ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', 'salePrice'], ['Type', 'type'],
+      ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
+      ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'], ['Reviewer', 'reviewer'],
+      ['Year Built', 'yearBuilt'], ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
+      ['Created By', record => record.createdBy?.name || ''], ['Created By Email', record => record.createdBy?.email || ''],
+      ['Created At', record => record.createdAt ? new Date(record.createdAt).toISOString() : '']
+    ];
+    const escapeXml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    const cell = value => `<Cell><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
+    const headerRow = `<Row>${columns.map(([label]) => cell(label)).join('')}</Row>`;
+    const dataRows = records.map(record => `<Row>${columns.map(([, accessor]) => cell(typeof accessor === 'function' ? accessor(record) : record[accessor])).join('')}</Row>`).join('');
+    const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Transactions"><Table>${headerRow}${dataRows}</Table></Worksheet></Workbook>`;
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="ammax-transactions-${date}.xls"`);
+    res.setHeader('Content-Length', Buffer.byteLength(workbook, 'utf8'));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(workbook);
+  } catch (error) { res.status(500).json({ message: 'Could not export transactions', error: error.message }); }
+});
 app.get('/api/contacts/search', requireAuth, async (req, res) => {
   try {
     const query = String(req.query.q || '').trim().toLowerCase();
@@ -298,6 +324,31 @@ app.get('/api/transactions/:id/checklist/:itemId/document/:fileId', requireAuth,
     const status = error.code === 404 ? 404 : error.code === 403 ? 403 : 500;
     if (!res.headersSent) res.status(status).json({ message: status === 404 ? 'Document no longer exists in Google Drive' : 'Could not open document', error: error.message });
   }
+});
+
+app.delete('/api/transactions/:id/checklist/:itemId/document/:fileId', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Only administrators can remove attachments' });
+  try {
+    const transaction = await Transaction.findById(req.params.id);
+    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+    const item = (transaction.checklist || []).find(row => String(row?.id) === String(req.params.itemId));
+    if (!item) return res.status(404).json({ message: 'Checklist item not found' });
+    const documents = item.documents?.length ? item.documents : item.driveFileId ? [{ name: item.attachment, driveFileId: item.driveFileId, mimeType: item.mimeType, uploadedAt: transaction.updatedAt }] : [];
+    if (!documents.some(document => String(document.driveFileId) === String(req.params.fileId))) return res.status(404).json({ message: 'Document not found' });
+    const { drive } = driveClient();
+    try { await drive.files.delete({ fileId: req.params.fileId, supportsAllDrives: true }); }
+    catch (error) { if (error.code !== 404) throw error; }
+    const remaining = documents.filter(document => String(document.driveFileId) !== String(req.params.fileId));
+    const latest = remaining[0];
+    item.documents = remaining;
+    item.attachment = latest?.name || '';
+    item.driveFileId = latest?.driveFileId || '';
+    item.mimeType = latest?.mimeType || '';
+    item.driveUrl = '';
+    transaction.markModified('checklist');
+    await transaction.save();
+    res.json(transaction);
+  } catch (error) { res.status(500).json({ message: 'Could not remove attachment', error: error.message }); }
 });
 
 app.use((error, _req, res, _next) => {

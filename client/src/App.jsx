@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, CalendarDays, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
+import { ArrowLeft, Building2, CalendarDays, Download, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
@@ -31,7 +31,7 @@ const fields = [
   ['type', 'Type', 'select', ['Purchase', 'Sale', 'Lease']],
   ['checklistType', 'Checklist Type', 'select', ['Buyer Side Sale', 'Seller Side Sale', 'Rental']],
   ['office', 'Office', 'text', 'Brampton'],
-  ['subjectRemovalDate', 'Subject Removal Date', 'date']
+  ['subjectRemovalDate', 'Conditional Removal Date', 'date']
 ];
 
 async function readApiResponse(response) {
@@ -45,10 +45,10 @@ async function readApiResponse(response) {
 function Header({ dark, toggleTheme, user, onLogout }) {
   return <header className="header">
     <div className="nav-shell">
-      <a className="brand" href="#" aria-label="AMMAX Realty home">
+      <Link className="brand" to="/" aria-label="AMMAX Realty home">
         <img className="logo-image" src="https://ammax.ca/logo.png" alt="AMMAX" />
         <span>AMMAX REALTY INC<span className="gold">.</span></span>
-      </a>
+      </Link>
       <div className="header-actions">{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16}/> : <UserRound size={16}/>}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
         <button className="theme-button" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
         {user && <button className="logout-button" onClick={onLogout}><LogOut size={15}/> Logout</button>}
@@ -78,7 +78,7 @@ function TransactionCard({ item, onDelete, showOwner }) {
 const summaryFields = [
   ['Address', 'address'], ['Agent', 'agent'], ['Close of Deal', 'closeOfDeal'], ['Sale Price', 'salePrice'], ['Buyer', 'buyer'],
   ['Acceptance Date', 'acceptanceDate'], ['Deal Number', 'dealNumber'], ['Email', 'email'], ['Seller', 'seller'], ['Reviewer', 'reviewer'],
-  ['Year Built', 'yearBuilt'], ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Subject Removal Date', 'subjectRemovalDate']
+  ['Year Built', 'yearBuilt'], ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Conditional Removal Date', 'subjectRemovalDate']
 ];
 
 function TransactionEditForm({ transaction, onUpdated }) {
@@ -124,7 +124,7 @@ function TransactionEditForm({ transaction, onUpdated }) {
       <label><span>Source</span><select value={form.source} onChange={e => update('source', e.target.value)}><option value="">Select</option><option>Referral</option><option>Website</option><option>Repeat Client</option><option>Walk-in</option><option>Other</option></select></label>
       {input('Deal Number', 'dealNumber', 'text', false, true)}
       <div className="address-pair"><label><span>Office Lead</span><select value={form.officeLead} onChange={e => update('officeLead', e.target.value)}><option value="">Select</option><option>Yes</option><option>No</option></select></label>{input('File ID', 'fileId')}</div>
-      {input('Subject Removal Date', 'subjectRemovalDate', 'date')}
+      {input('Conditional Removal Date', 'subjectRemovalDate', 'date')}
       {input('Acceptance Date', 'acceptanceDate', 'date', true)}{input('Closing Date', 'closeOfDeal', 'date', true)}
       {input('Actual Closing Date', 'actualClosingDate', 'date')}
     </div>
@@ -376,8 +376,8 @@ function CommissionForm({ transaction, onUpdated }) {
 const checklistDocuments = [
   ['Agreement of Purchase', 'Incomplete'], ['Confirmation of Co-op', 'Incomplete'], ['Buyer Representation', 'Completed'],
   ['Fintrac ID', 'Required'], ['Copy of Deposit/Receipt', 'Incomplete'], ['Receipt of Funds (Fintrac)', 'Required'],
-  ['Waivers', 'Incomplete'], ['Amendment', 'If Applicable'], ['Survey', 'If Applicable'], ['Water Test', 'If Applicable'],
-  ['Septic Receipt', 'If Applicable'], ['MLS Printout', 'If Applicable'], ['Signed Trades (Admin Use Only)', 'Required'],
+  ['Waivers', 'Incomplete'], ['Amendment', 'If Applicable'], ['Other', 'If Applicable'], ['Confirmation of Closing', 'Required'],
+  ['MLS Printout', 'If Applicable'], ['Signed Trades (Admin Use Only)', 'Required'],
   ['Mutual Release', 'If Applicable'], ['Registrant Disclosure', 'If Applicable'], ['RECO', 'Required'],
   ['Listing Agreement', 'Required'], ['MLS Data', 'Required'], ['RECO', 'Required']
 ];
@@ -385,17 +385,31 @@ const defaultChecklist = () => checklistDocuments.map(([documentation, status], 
 const documentDate = value => value ? new Date(value).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Previous upload';
 const checklistWithDefaults = checklist => {
   const savedRows = Array.isArray(checklist) ? checklist : [];
-  const savedById = new Map(savedRows.map(row => [String(row.id), row]));
-  return defaultChecklist().map(defaultRow => ({ ...defaultRow, ...(savedById.get(String(defaultRow.id)) || {}) }));
+  const savedByName = new Map();
+  for (const row of savedRows) savedByName.set(row.documentation, [...(savedByName.get(row.documentation) || []), row]);
+  return defaultChecklist().map(defaultRow => {
+    const saved = savedByName.get(defaultRow.documentation)?.shift();
+    return { ...defaultRow, ...(saved || {}), id: defaultRow.id, documentation: defaultRow.documentation };
+  });
 };
 
-function ChecklistForm({ transaction, onUpdated }) {
+function ChecklistForm({ transaction, onUpdated, user }) {
   const [rows, setRows] = useState(() => checklistWithDefaults(transaction.checklist));
   const [pendingFiles, setPendingFiles] = useState({});
   const [filter, setFilter] = useState('All Statuses');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const update = (id, name, value) => setRows(current => current.map(row => row.id === id ? { ...row, [name]: value } : row));
+  const removeDocument = async (itemId, fileId, name) => {
+    if (!window.confirm(`Remove "${name || 'this attachment'}" from the checklist and Google Drive?`)) return;
+    setMessage('');
+    try {
+      const response = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/document/${fileId}`, { method: 'DELETE' });
+      const result = await readApiResponse(response);
+      if (!response.ok) throw new Error(result.message || 'Could not remove attachment');
+      setRows(checklistWithDefaults(result.checklist)); onUpdated(result); setMessage('Attachment removed successfully.');
+    } catch (error) { setMessage(error.message); }
+  };
   const save = async () => {
     setSaving(true); setMessage('');
     try {
@@ -436,13 +450,13 @@ function ChecklistForm({ transaction, onUpdated }) {
     <div className="checklist-heading"><div><span className="eyebrow">Compliance Documents</span><h2>Sales Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
     <div className="checklist-table-wrap"><table className="checklist-table"><thead><tr><th>#</th><th>Documentation</th><th>Status</th><th>Docs</th><th>Comments</th><th>Attachment</th></tr></thead><tbody>
       {visibleRows.map(row => <Fragment key={row.id}>
-        {Number(row.id) === 17 && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
+        {Number(row.id) === 16 && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
         <tr>
           <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
           <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
           <td>{row.driveFileId ? <span className="document-count">📎 {(row.documents || []).length || 1}</span> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
           <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label><div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <a className="document-version" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer" key={document.driveFileId}><span>View {documentIndex + 1}</span><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></a>)}</div></div>{(pendingFiles[row.id]?.length || row.attachment) && <span className="attachment-name">{pendingFiles[row.id]?.length ? `${pendingFiles[row.id].length} file(s) selected` : row.attachment}</span>}</td>
+          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label>{pendingFiles[row.id]?.length > 0 && <span className="pending-file-count">{pendingFiles[row.id].length} file(s) selected</span>}<div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <div className="document-version-row" key={document.driveFileId}><div className="document-version-info"><strong title={document.name}>{document.name || `Document ${documentIndex + 1}`}</strong><div><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></div></div><div className="document-version-actions"><a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer">View</a>{user.role === 'admin' && <button className="remove-document-button" type="button" title="Delete attachment" onClick={() => removeDocument(row.id, document.driveFileId, document.name)}><Trash2 size={12}/><span>Delete</span></button>}</div></div>)}</div></div></td>
         </tr>
       </Fragment>)}
     </tbody></table></div>
@@ -475,7 +489,7 @@ function TransactionDetail({ user, onLogout }) {
           {['Transaction', 'Contacts', 'Commission', 'Checklist'].map(tab => <button key={tab} role="tab" aria-selected={activeTab === tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}
         </div>
         <div className="summary-grid">{summaryFields.map(([label, key]) => <div className="detail" key={key}><span>{label}</span><strong className={key === 'email' ? 'email-value' : ''}>{valueFor(key)}</strong></div>)}</div>
-        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} /> : <ChecklistForm transaction={transaction} onUpdated={setTransaction} />}
+        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} /> : <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />}
       </section>
     </main>
   </>;
@@ -526,6 +540,7 @@ function TransactionsPage({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [deletingId, setDeletingId] = useState('');
+  const [exporting, setExporting] = useState(false);
   useEffect(() => {
     fetch('/api/transactions')
       .then(async response => {
@@ -550,12 +565,37 @@ function TransactionsPage({ user, onLogout }) {
     } catch (error) { window.alert(error.message); }
     finally { setDeletingId(''); }
   };
+  const downloadExcel = async () => {
+    setExporting(true);
+    try {
+      const columns = [
+        ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co-Buyer Agent', 'coBuyerAgent'],
+        ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', item => item.salePrice ? Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 }) : ''],
+        ['Type', 'type'], ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
+        ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'], ['Reviewer', 'reviewer'],
+        ['Year Built', 'yearBuilt'], ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
+        ['Created By', item => item.createdBy?.name || ''], ['Created By Email', item => item.createdBy?.email || '']
+      ];
+      const escapeXml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+      const cell = value => `<Cell><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
+      const header = `<Row>${columns.map(([label]) => cell(label)).join('')}</Row>`;
+      const rows = transactions.map(item => `<Row>${columns.map(([, accessor]) => cell(typeof accessor === 'function' ? accessor(item) : item[accessor])).join('')}</Row>`).join('');
+      const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Transactions"><Table>${header}${rows}</Table></Worksheet></Workbook>`;
+      const blob = new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' });
+      const filename = `ammax-transactions-${new Date().toISOString().slice(0, 10)}.xls`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { window.alert(error.message); }
+    finally { setExporting(false); }
+  };
   return <>
     <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
     <main>
       <div className="page-heading">
         <div><span className="eyebrow">Records Management</span><h1>Transactions</h1><p>Manage your real estate transaction records in one place.</p></div>
-        <button className="primary create" onClick={() => setOpen(true)}><FilePlus2 size={17} /> Create Transaction</button>
+        <div className="page-heading-actions"><button className="secondary excel-download" type="button" onClick={downloadExcel} disabled={exporting}><Download size={17}/> {exporting ? 'Preparing Excel…' : 'Download in Excel'}</button><button className="primary create" onClick={() => setOpen(true)}><FilePlus2 size={17} /> Create Transaction</button></div>
       </div>
       <div className="toolbar"><div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div><span>{filtered.length} {filtered.length === 1 ? 'record' : 'records'}</span></div>
       {loading ? <div className="empty"><div className="empty-icon"><CalendarDays /></div><h3>Loading transactions…</h3></div>
