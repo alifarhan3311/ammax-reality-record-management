@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, CalendarDays, Download, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Download, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
   acceptanceDate: '', dealNumber: '', email: '', seller: '', reviewer: '',
-  yearBuilt: '', type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: ''
+  type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: ''
 };
 const cleanNumberInput = value => String(value ?? '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
 const formatNumberInput = value => {
@@ -14,6 +14,33 @@ const formatNumberInput = value => {
   const [integer, decimals] = clean.split('.');
   const grouped = (integer || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return decimals === undefined ? grouped : `${grouped}.${decimals}`;
+};
+
+const sortTransactions = (items, sortField, sortOrder) => {
+  if (!sortField) return items;
+  const sorted = [...items].sort((a, b) => {
+    let valA = a[sortField];
+    let valB = b[sortField];
+    if (sortField === 'salePrice') {
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return numA - numB;
+    }
+    if (sortField === 'dealNumber') {
+      const strA = String(valA ?? '');
+      const strB = String(valB ?? '');
+      return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+    }
+    if (['closeOfDeal', 'acceptanceDate', 'createdAt'].includes(sortField)) {
+      const timeA = valA ? new Date(valA).getTime() : 0;
+      const timeB = valB ? new Date(valB).getTime() : 0;
+      return timeA - timeB;
+    }
+    const strA = String(valA ?? '');
+    const strB = String(valB ?? '');
+    return strA.localeCompare(strB, undefined, { sensitivity: 'base' });
+  });
+  return sortOrder === 'desc' ? sorted.reverse() : sorted;
 };
 
 const fields = [
@@ -25,13 +52,12 @@ const fields = [
   ['acceptanceDate', 'Acceptance Date', 'date'],
   ['dealNumber', 'Deal Number', 'text', '0'],
   ['email', 'Email', 'email', 'client@example.com'],
+  ['coBuyerAgent', 'Co Agent', 'select', ['Seller', 'Buyer']],
   ['seller', 'Seller', 'text', 'Linda Marie Helene Belanger'],
-  ['reviewer', 'Reviewer', 'text', 'Unassigned'],
-  ['yearBuilt', 'Year Built', 'number', '2000'],
   ['type', 'Type', 'select', ['Purchase', 'Sale', 'Lease']],
   ['checklistType', 'Checklist Type', 'select', ['Buyer Side Sale', 'Seller Side Sale', 'Rental']],
   ['office', 'Office', 'text', 'Brampton'],
-  ['subjectRemovalDate', 'Conditional Removal Date', 'date']
+  ['subjectRemovalDate', 'Condition Removal Date', 'date']
 ];
 
 async function readApiResponse(response) {
@@ -49,24 +75,42 @@ function Header({ dark, toggleTheme, user, onLogout }) {
         <img className="logo-image" src="https://ammax.ca/logo.png" alt="AMMAX" />
         <span>AMMAX REALTY INC<span className="gold">.</span></span>
       </Link>
-      <div className="header-actions">{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16}/> : <UserRound size={16}/>}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
+      <div className="header-actions">{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16} /> : <UserRound size={16} />}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
         <button className="theme-button" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
-        {user && <button className="logout-button" onClick={onLogout}><LogOut size={15}/> Logout</button>}
+        {user && <button className="logout-button" onClick={onLogout}><LogOut size={15} /> Logout</button>}
       </div>
     </div>
   </header>;
 }
 
-function TransactionCard({ item, onDelete, showOwner }) {
+function TransactionCard({ item, onDelete, showOwner, sortField, sortOrder, onSort }) {
   const display = [
-    ['Address', item.address], ['Buyer', item.buyer], ['Agent', item.agent], ['Close of Deal', item.closeOfDeal],
-    ['Sale Price', item.salePrice ? `$${Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—'],
-    ['Type', item.type]
+    ['Address', item.address, 'address'],
+    ['Buyer', item.buyer, 'buyer'],
+    ['Agent', item.agent, 'agent'],
+    ['Close of Deal', item.closeOfDeal, 'closeOfDeal'],
+    ['Sale Price', item.salePrice ? `$${Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—', 'salePrice'],
+    ['Type', item.type, 'type'],
+    ['Deal Number', item.dealNumber, 'dealNumber']
   ];
   return <article className="transaction-card">
-    <div className="card-details">{display.map(([label, value]) => <div className="detail" key={label}>
-      <span>{label}</span><strong>{value || '—'}</strong>
-    </div>)}</div>{showOwner && <div className="owner-line"><ShieldCheck size={13}/><span>Created by <strong>{item.createdBy?.name || 'Administrator'}</strong>{item.createdBy?.email && ` · ${item.createdBy.email}`}</span></div>}
+    <div className="card-details">{display.map(([label, value, fieldKey]) => {
+      const isActive = sortField === fieldKey;
+      return <div className="detail" key={label}>
+        <button
+          type="button"
+          className={`detail-sort-btn ${isActive ? 'is-active' : ''}`}
+          onClick={() => onSort?.(fieldKey)}
+          title={`Sort by ${label}`}
+        >
+          <span>{label}</span>
+          <span className="sort-indicator">
+            {isActive ? (sortOrder === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={10} className="dim" />}
+          </span>
+        </button>
+        <strong>{value || '—'}</strong>
+      </div>;
+    })}</div>{showOwner && <div className="owner-line"><ShieldCheck size={13} /><span>Created by <strong>{item.createdBy?.name || 'Administrator'}</strong>{item.createdBy?.email && ` · ${item.createdBy.email}`}</span></div>}
     <div className="card-actions">
       <Link className="action-button view-action" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={18} /></Link>
       <Link className="action-button edit-action" to={`/transactions/${item._id || item.id}?edit=1`} aria-label={`Edit ${item.address}`} title="Edit transaction"><Pencil size={17} /></Link>
@@ -77,8 +121,8 @@ function TransactionCard({ item, onDelete, showOwner }) {
 
 const summaryFields = [
   ['Address', 'address'], ['Agent', 'agent'], ['Close of Deal', 'closeOfDeal'], ['Sale Price', 'salePrice'], ['Buyer', 'buyer'],
-  ['Acceptance Date', 'acceptanceDate'], ['Deal Number', 'dealNumber'], ['Email', 'email'], ['Seller', 'seller'], ['Reviewer', 'reviewer'],
-  ['Year Built', 'yearBuilt'], ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Conditional Removal Date', 'subjectRemovalDate']
+  ['Acceptance Date', 'acceptanceDate'], ['Deal Number', 'dealNumber'], ['Email', 'email'], ['Co Agent', 'coBuyerAgent'], ['Seller', 'seller'],
+  ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Condition Removal Date', 'subjectRemovalDate']
 ];
 
 function TransactionEditForm({ transaction, onUpdated }) {
@@ -89,8 +133,8 @@ function TransactionEditForm({ transaction, onUpdated }) {
     agent: transaction.agent || '', office: transaction.office || '', mlsNumber: transaction.mlsNumber || '', checklistType: transaction.checklistType || 'Buyer Side Sale',
     streetNumber: transaction.streetNumber || streetMatch?.[1] || '', direction: transaction.direction || '', streetName: transaction.streetName || streetMatch?.[2] || '', unitNumber: transaction.unitNumber || '',
     postalCode: transaction.postalCode || provincePostal?.[2] || '', province: transaction.province || provincePostal?.[1] || '', city: transaction.city || addressParts[1] || '', county: transaction.county || '',
-    coBuyerAgent: transaction.coBuyerAgent || '', type: transaction.type || 'Purchase', salePrice: transaction.salePrice || '', yearBuilt: transaction.yearBuilt || '', source: transaction.source || '',
-    dealNumber: transaction.dealNumber || '', officeLead: transaction.officeLead || '', fileId: transaction.fileId || '', subjectRemovalDate: transaction.subjectRemovalDate || '',
+    coBuyerAgent: transaction.coBuyerAgent || '', type: transaction.type || 'Purchase', salePrice: transaction.salePrice || '',
+    dealNumber: transaction.dealNumber || '', officeLead: transaction.officeLead || '', subjectRemovalDate: transaction.subjectRemovalDate || '',
     acceptanceDate: transaction.acceptanceDate || '', closeOfDeal: transaction.closeOfDeal || '', actualClosingDate: transaction.actualClosingDate || ''
   });
   const [saving, setSaving] = useState(false); const [message, setMessage] = useState('');
@@ -118,13 +162,12 @@ function TransactionEditForm({ transaction, onUpdated }) {
       {input('Street Name', 'streetName', 'text', true)}
       <div className="address-pair">{input('Unit #', 'unitNumber')}{input('Postal Code', 'postalCode', 'text', true)}</div>
       <label><span>Province <b>*</b></span><select value={form.province} onChange={e => update('province', e.target.value)} required><option value="">Select province</option><option>Ontario</option><option>Alberta</option><option>British Columbia</option><option>Manitoba</option><option>New Brunswick</option><option>Newfoundland and Labrador</option><option>Nova Scotia</option><option>Prince Edward Island</option><option>Quebec</option><option>Saskatchewan</option></select></label>
-      {input('City', 'city', 'text', true)}{input('County', 'county')}{input('Co-Buyer Agent', 'coBuyerAgent')}
+      {input('City', 'city', 'text', true)}{input('County', 'county')}<label><span>Co Agent</span><select value={form.coBuyerAgent} onChange={e => update('coBuyerAgent', e.target.value)}><option value="">Select</option><option>Seller</option><option>Buyer</option></select></label>
       <label><span>Type (Representation) <b>*</b></span><select value={form.type} onChange={e => update('type', e.target.value)} required><option>Purchase</option><option>Sale</option><option>Lease</option></select></label>
-      <label><span>Sale Price <b>*</b></span><input inputMode="decimal" value={formatNumberInput(form.salePrice)} onChange={e => update('salePrice', cleanNumberInput(e.target.value))} required /></label>{input('Year Built', 'yearBuilt')}
-      <label><span>Source</span><select value={form.source} onChange={e => update('source', e.target.value)}><option value="">Select</option><option>Referral</option><option>Website</option><option>Repeat Client</option><option>Walk-in</option><option>Other</option></select></label>
+      <label><span>Sale Price <b>*</b></span><input inputMode="decimal" value={formatNumberInput(form.salePrice)} onChange={e => update('salePrice', cleanNumberInput(e.target.value))} required /></label>
       {input('Deal Number', 'dealNumber', 'text', false, true)}
-      <div className="address-pair"><label><span>Office Lead</span><select value={form.officeLead} onChange={e => update('officeLead', e.target.value)}><option value="">Select</option><option>Yes</option><option>No</option></select></label>{input('File ID', 'fileId')}</div>
-      {input('Conditional Removal Date', 'subjectRemovalDate', 'date')}
+      <label><span>Office Lead</span><select value={form.officeLead} onChange={e => update('officeLead', e.target.value)}><option value="">Select</option><option>Yes</option><option>No</option></select></label>
+      {input('Condition Removal Date', 'subjectRemovalDate', 'date')}
       {input('Acceptance Date', 'acceptanceDate', 'date', true)}{input('Closing Date', 'closeOfDeal', 'date', true)}
       {input('Actual Closing Date', 'actualClosingDate', 'date')}
     </div>
@@ -190,7 +233,7 @@ function LegacyContactsForm({ transaction, onUpdated }) {
     <aside className="contact-sidebar">{contactCategories.map(item => <button className={category === item ? 'active' : ''} onClick={() => { setCategory(item); setMessage(''); }} key={item}>{item}</button>)}</aside>
     <form className="contact-form" onSubmit={save}>
       <div className="contact-form-heading"><div><span className="eyebrow">{category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
-      <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by name, email, phone or company" />{searching && <small>Searching…</small>}</div>{searchResults.length > 0 && <div className="contact-search-results">{searchResults.map(result => <button type="button" key={result.id} onClick={() => selectContact(result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}{search.trim().length >= 2 && !searching && searchResults.length === 0 && <div className="contact-search-empty">No matching saved contact</div>}</div>
+      <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by name, email, phone or company" />{searching && <small>Searching…</small>}</div>{searchResults.length > 0 && <div className="contact-search-results">{searchResults.map(result => <button type="button" key={result.id} onClick={() => selectContact(result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}{search.trim().length >= 2 && !searching && searchResults.length === 0 && <div className="contact-search-empty">No matching saved contact</div>}</div>
       <div className="or-divider"><span>Or Enter New Contact</span></div>
       <label className="check-field"><input type="checkbox" checked={data.entity} onChange={event => update('entity', event.target.checked)} /><span>{labelPrefix} is a trust, company, or other entity</span></label>
       <div className="contact-fields">
@@ -270,8 +313,8 @@ function ContactsForm({ transaction, onUpdated }) {
     <form className="contact-form" onSubmit={save}>
       <div className="contact-form-heading"><div><span className="eyebrow">{category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
       {entries.map((data, index) => <section className="contact-entry" key={`${key}-${index}`}>
-        <div className="contact-entry-heading"><h3>{prefix} {index + 1}</h3>{index > 0 && <button className="remove-contact" type="button" onClick={() => removeContact(index)}><Trash2 size={15}/> Remove</button>}</div>
-        <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17}/><input value={searches[index] || ''} onChange={event => searchContacts(index, event.target.value)} placeholder="Search by name, email, phone or company" /></div>{(results[index] || []).length > 0 && <div className="contact-search-results">{results[index].map(result => <button type="button" key={`${result.id}-${index}`} onClick={() => selectContact(index, result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}</div>
+        <div className="contact-entry-heading"><h3>{prefix} {index + 1}</h3>{index > 0 && <button className="remove-contact" type="button" onClick={() => removeContact(index)}><Trash2 size={15} /> Remove</button>}</div>
+        <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17} /><input value={searches[index] || ''} onChange={event => searchContacts(index, event.target.value)} placeholder="Search by name, email, phone or company" /></div>{(results[index] || []).length > 0 && <div className="contact-search-results">{results[index].map(result => <button type="button" key={`${result.id}-${index}`} onClick={() => selectContact(index, result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}</div>
         <div className="or-divider"><span>Or Enter New Contact</span></div>
         <label className="check-field"><input type="checkbox" checked={data.entity} onChange={event => update(index, 'entity', event.target.checked)} /><span>{prefix} is a trust, company, or other entity</span></label>
         <div className="contact-fields">
@@ -354,7 +397,7 @@ function CommissionForm({ transaction, onUpdated }) {
     </section>
     <section className="commission-section"><div className="section-heading"><h2>Deposits</h2></div>
       <fieldset className="radio-field trust-radio"><legend>Will Your Brokerage Hold Trust Money?</legend><label><input type="radio" name="holdTrustMoney" value="yes" checked={form.holdTrustMoney === 'yes'} onChange={e => update('holdTrustMoney', e.target.value)} /> Yes</label><label><input type="radio" name="holdTrustMoney" value="no" checked={form.holdTrustMoney === 'no'} onChange={e => update('holdTrustMoney', e.target.value)} /> No</label></fieldset>
-      <div className="commission-three">{field('Deposit Amount', 'depositAmount')}{field('Date of Cheque', 'chequeDate', 'date')}{field('Date Posted to Log Book', 'logBookDate', 'date')}</div>
+      <div className="commission-three">{field('Deposit / Receipt Commission Amount', 'depositAmount')}{field('Date of Cheque', 'chequeDate', 'date')}{field('Date Posted to Log Book', 'logBookDate', 'date')}</div>
     </section>
     <section className="commission-section"><div className="section-heading"><h2>Referral Details</h2></div>
       <div className="commission-three"><label><span>Referral Type</span><select value={form.referralType} onChange={e => update('referralType', e.target.value)}><option value="">Select</option><option>Incoming</option><option>Outgoing</option><option>Internal</option></select></label>{field('Referral Agent', 'referralAgent', 'text')}{field('Referral Brokerage Name', 'referralBrokerageName', 'text')}</div>
@@ -375,20 +418,25 @@ function CommissionForm({ transaction, onUpdated }) {
 
 const checklistDocuments = [
   ['Agreement of Purchase', 'Incomplete'], ['Confirmation of Co-op', 'Incomplete'], ['Buyer Representation', 'Completed'],
-  ['Fintrac ID', 'Required'], ['Copy of Deposit/Receipt', 'Incomplete'], ['Receipt of Funds (Fintrac)', 'Required'],
-  ['Waivers', 'Incomplete'], ['Amendment', 'If Applicable'], ['Other', 'If Applicable'], ['Confirmation of Closing', 'Required'],
-  ['MLS Printout', 'If Applicable'], ['Signed Trades (Admin Use Only)', 'Required'],
-  ['Mutual Release', 'If Applicable'], ['Registrant Disclosure', 'If Applicable'], ['RECO', 'Required'],
-  ['Listing Agreement', 'Required'], ['MLS Data', 'Required'], ['RECO', 'Required']
+  ['Fintrac ID', 'Required'], ['Copy of Deposit/Receipt', 'Incomplete'], ['Bank Confirmation', 'Required'],
+  ['Receipt of Funds (Fintrac)', 'Required'], ['Waivers', 'Incomplete'], ['Amendment', 'If Applicable'],
+  ['Other', 'If Applicable'], ['Confirmation of Closing', 'Required'], ['MLS Printout', 'If Applicable'],
+  ['Signed Trades (Admin Use Only)', 'Required'], ['Mutual Release', 'If Applicable'], ['Registrant Disclosure', 'If Applicable'],
+  ['RECO', 'Required'], ['Listing Agreement', 'Required'], ['MLS Data', 'Required'], ['RECO', 'Required'],
+  ['Other', 'If Applicable']
 ];
 const defaultChecklist = () => checklistDocuments.map(([documentation, status], index) => ({ id: index + 1, documentation, status, comments: '', attachment: '' }));
 const documentDate = value => value ? new Date(value).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Previous upload';
 const checklistWithDefaults = checklist => {
   const savedRows = Array.isArray(checklist) ? checklist : [];
+  const savedById = new Map();
   const savedByName = new Map();
-  for (const row of savedRows) savedByName.set(row.documentation, [...(savedByName.get(row.documentation) || []), row]);
+  for (const row of savedRows) {
+    if (row.id) savedById.set(Number(row.id), row);
+    savedByName.set(row.documentation, [...(savedByName.get(row.documentation) || []), row]);
+  }
   return defaultChecklist().map(defaultRow => {
-    const saved = savedByName.get(defaultRow.documentation)?.shift();
+    const saved = savedById.get(defaultRow.id) || savedByName.get(defaultRow.documentation)?.shift();
     return { ...defaultRow, ...(saved || {}), id: defaultRow.id, documentation: defaultRow.documentation };
   });
 };
@@ -447,16 +495,16 @@ function ChecklistForm({ transaction, onUpdated, user }) {
   };
   const visibleRows = filter === 'All Statuses' ? rows : rows.filter(row => row.status === filter);
   return <div className="checklist-form">
-    <div className="checklist-heading"><div><span className="eyebrow">Compliance Documents</span><h2>Sales Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
+    <div className="checklist-heading"><div><span className="eyebrow">Compliance Documents</span><h2>Sales/Buyer Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
     <div className="checklist-table-wrap"><table className="checklist-table"><thead><tr><th>#</th><th>Documentation</th><th>Status</th><th>Docs</th><th>Comments</th><th>Attachment</th></tr></thead><tbody>
       {visibleRows.map(row => <Fragment key={row.id}>
-        {Number(row.id) === 16 && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
+        {row.documentation === 'Listing Agreement' && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
         <tr>
           <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
           <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
           <td>{row.driveFileId ? <span className="document-count">📎 {(row.documents || []).length || 1}</span> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
           <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label>{pendingFiles[row.id]?.length > 0 && <span className="pending-file-count">{pendingFiles[row.id].length} file(s) selected</span>}<div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <div className="document-version-row" key={document.driveFileId}><div className="document-version-info"><strong title={document.name}>{document.name || `Document ${documentIndex + 1}`}</strong><div><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></div></div><div className="document-version-actions"><a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer">View</a>{user.role === 'admin' && <button className="remove-document-button" type="button" title="Delete attachment" onClick={() => removeDocument(row.id, document.driveFileId, document.name)}><Trash2 size={12}/><span>Delete</span></button>}</div></div>)}</div></div></td>
+          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label>{pendingFiles[row.id]?.length > 0 && <span className="pending-file-count">{pendingFiles[row.id].length} file(s) selected</span>}<div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <div className="document-version-row" key={document.driveFileId}><div className="document-version-info"><strong title={document.name}>{document.name || `Document ${documentIndex + 1}`}</strong><div><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></div></div><div className="document-version-actions"><a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer">View</a>{user.role === 'admin' && <button className="remove-document-button" type="button" title="Delete attachment" onClick={() => removeDocument(row.id, document.driveFileId, document.name)}><Trash2 size={12} /><span>Delete</span></button>}</div></div>)}</div></div></td>
         </tr>
       </Fragment>)}
     </tbody></table></div>
@@ -475,7 +523,7 @@ function TransactionDetail({ user, onLogout }) {
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
   if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
   if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
-  const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : transaction[key] || '—';
+  const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : (key === 'coBuyerAgent' ? (transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '')) : transaction[key]) || '—';
   return <>
     <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
     <main className="detail-page">
@@ -517,12 +565,12 @@ function TransactionModal({ onClose, onCreated }) {
       <form onSubmit={submit}>
         <div className="form-grid">
           {fields.map(([name, label, type, options]) => <label className={type === 'textarea' ? 'wide' : ''} key={name}>
-            <span>{label}{['address','agent','buyer','email'].includes(name) && <b> *</b>}</span>
+            <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
             {name === 'dealNumber' ? <input value="Assigned automatically" readOnly />
               : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
-              : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
-              : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
-              : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address','agent','buyer','email'].includes(name)} />}
+                : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
+                  : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
+                    : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address', 'agent', 'buyer', 'email'].includes(name)} />}
           </label>)}
         </div>
         {error && <p className="error">{error}. Please make sure the server is running.</p>}
@@ -537,6 +585,8 @@ function TransactionsPage({ user, onLogout }) {
   const [open, setOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [query, setQuery] = useState('');
+  const [sortField, setSortField] = useState('createdAt');
+  const [sortOrder, setSortOrder] = useState('desc');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [deletingId, setDeletingId] = useState('');
@@ -552,7 +602,19 @@ function TransactionsPage({ user, onLogout }) {
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
-  const filtered = transactions.filter(t => [t.address, t.buyer, t.seller, t.agent].some(v => v?.toLowerCase().includes(query.toLowerCase())));
+
+  const handleSort = field => {
+    if (sortField === field) {
+      setSortOrder(current => current === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder(['salePrice', 'closeOfDeal', 'createdAt'].includes(field) ? 'desc' : 'asc');
+    }
+  };
+
+  const filtered = transactions.filter(t => [t.address, t.buyer, t.seller, t.agent, t.dealNumber].some(v => v?.toLowerCase().includes(query.toLowerCase())));
+  const displayedTransactions = sortTransactions(filtered, sortField, sortOrder);
+
   const deleteTransaction = async item => {
     const id = item._id || item.id;
     if (!window.confirm(`Delete transaction "${item.address}"?\n\nThis action cannot be undone.`)) return;
@@ -569,11 +631,11 @@ function TransactionsPage({ user, onLogout }) {
     setExporting(true);
     try {
       const columns = [
-        ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co-Buyer Agent', 'coBuyerAgent'],
+        ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
         ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', item => item.salePrice ? Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 }) : ''],
         ['Type', 'type'], ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
-        ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'], ['Reviewer', 'reviewer'],
-        ['Year Built', 'yearBuilt'], ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
+        ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'],
+        ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
         ['Created By', item => item.createdBy?.name || ''], ['Created By Email', item => item.createdBy?.email || '']
       ];
       const escapeXml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -595,13 +657,43 @@ function TransactionsPage({ user, onLogout }) {
     <main>
       <div className="page-heading">
         <div><span className="eyebrow">Records Management</span><h1>Transactions</h1><p>Manage your real estate transaction records in one place.</p></div>
-        <div className="page-heading-actions"><button className="secondary excel-download" type="button" onClick={downloadExcel} disabled={exporting}><Download size={17}/> {exporting ? 'Preparing Excel…' : 'Download in Excel'}</button><button className="primary create" onClick={() => setOpen(true)}><FilePlus2 size={17} /> Create Transaction</button></div>
+        <div className="page-heading-actions"><button className="secondary excel-download" type="button" onClick={downloadExcel} disabled={exporting}><Download size={17} /> {exporting ? 'Preparing Excel…' : 'Download in Excel'}</button><button className="primary create" onClick={() => setOpen(true)}><FilePlus2 size={17} /> Create Transaction</button></div>
       </div>
-      <div className="toolbar"><div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div><span>{filtered.length} {filtered.length === 1 ? 'record' : 'records'}</span></div>
+      <div className="toolbar">
+        <div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div>
+        <div className="sort-controls">
+          <label htmlFor="sort-field-select" className="sort-label">Sort by:</label>
+          <select
+            id="sort-field-select"
+            value={sortField}
+            onChange={e => handleSort(e.target.value)}
+            className="sort-select"
+          >
+            <option value="createdAt">Date Created</option>
+            <option value="address">Address</option>
+            <option value="buyer">Buyer</option>
+            <option value="agent">Agent</option>
+            <option value="closeOfDeal">Close of Deal</option>
+            <option value="salePrice">Sale Price</option>
+            <option value="type">Type</option>
+            <option value="dealNumber">Deal Number</option>
+          </select>
+          <button
+            type="button"
+            className="sort-order-btn"
+            onClick={() => setSortOrder(current => current === 'asc' ? 'desc' : 'asc')}
+            title={`Sort direction: ${sortOrder === 'asc' ? 'Ascending' : 'Descending'}`}
+          >
+            {sortOrder === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+            <span>{sortOrder === 'asc' ? 'ASC' : 'DESC'}</span>
+          </button>
+        </div>
+        <span>{displayedTransactions.length} {displayedTransactions.length === 1 ? 'record' : 'records'}</span>
+      </div>
       {loading ? <div className="empty"><div className="empty-icon"><CalendarDays /></div><h3>Loading transactions…</h3></div>
         : loadError ? <div className="empty"><div className="empty-icon"><X /></div><h3>Transactions could not be loaded</h3><p>{loadError}. Please check the MongoDB connection.</p></div>
-        : filtered.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{filtered.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} showOwner={user.role === 'admin'} />)}</div>
-        : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query ? 'Try a different search term.' : 'Create your first transaction to see it listed here.'}</p>{!query && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
+          : displayedTransactions.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{displayedTransactions.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} showOwner={user.role === 'admin'} sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />)}</div>
+            : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query ? 'Try a different search term.' : 'Create your first transaction to see it listed here.'}</p>{!query && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
     </main>
     {open && <TransactionModal onClose={() => setOpen(false)} onCreated={item => setTransactions([item, ...transactions])} />}
   </>;
@@ -621,14 +713,14 @@ function AuthPage({ mode, onAuthenticated }) {
       onAuthenticated(result.user); navigate('/');
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX"/><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>{isSignup ? 'Create your account' : 'Welcome back'}</h1><p>{isSignup ? 'Sign up to manage your own transaction records.' : 'Sign in to continue to your transactions.'}</p><form onSubmit={submit}>{isSignup && <label><span>Full Name</span><input value={form.name} onChange={e => setForm({...form,name:e.target.value})} required autoComplete="name" /></label>}<label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({...form,email:e.target.value})} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({...form,password:e.target.value})} required autoComplete={isSignup ? 'new-password' : 'current-password'} /></label>{isSignup && <label><span>Confirm Password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({...form,confirmPassword:e.target.value})} required autoComplete="new-password" /></label>}{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : isSignup ? 'Create Account' : 'Sign In'}</button></form><div className="auth-switch">{isSignup ? 'Already have an account?' : 'New to AMMAX Records?'} <Link to={isSignup ? '/login' : '/signup'}>{isSignup ? 'Sign in' : 'Create account'}</Link></div></section></div>;
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>{isSignup ? 'Create your account' : 'Welcome back'}</h1><p>{isSignup ? 'Sign up to manage your own transaction records.' : 'Sign in to continue to your transactions.'}</p><form onSubmit={submit}>{isSignup && <label><span>Full Name</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required autoComplete="name" /></label>}<label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required autoComplete={isSignup ? 'new-password' : 'current-password'} /></label>{isSignup && <label><span>Confirm Password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({ ...form, confirmPassword: e.target.value })} required autoComplete="new-password" /></label>}{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : isSignup ? 'Create Account' : 'Sign In'}</button></form><div className="auth-switch">{isSignup ? 'Already have an account?' : 'New to AMMAX Records?'} <Link to={isSignup ? '/login' : '/signup'}>{isSignup ? 'Sign in' : 'Create account'}</Link></div></section></div>;
 }
 
 export default function App() {
   const [user, setUser] = useState(null); const [checking, setChecking] = useState(true);
   useEffect(() => { fetch('/api/auth/me').then(response => response.ok ? response.json() : null).then(result => setUser(result?.user || null)).finally(() => setChecking(false)); }, []);
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); };
-  if (checking) return <div className="auth-loading"><img src="https://ammax.ca/logo.png" alt="AMMAX"/><p>Loading secure workspace…</p></div>;
+  if (checking) return <div className="auth-loading"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><p>Loading secure workspace…</p></div>;
   return <Routes>
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <AuthPage mode="login" onAuthenticated={setUser} />} />
     <Route path="/signup" element={user ? <Navigate to="/" replace /> : <AuthPage mode="signup" onAuthenticated={setUser} />} />

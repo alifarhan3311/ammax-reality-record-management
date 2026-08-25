@@ -120,11 +120,11 @@ app.get('/api/transactions-export/excel', requireAuth, async (req, res) => {
     const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
     const records = await Transaction.find(filter).populate('createdBy', 'name email').sort({ createdAt: 1 }).lean();
     const columns = [
-      ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co-Buyer Agent', 'coBuyerAgent'],
+      ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
       ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', 'salePrice'], ['Type', 'type'],
       ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
-      ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'], ['Reviewer', 'reviewer'],
-      ['Year Built', 'yearBuilt'], ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
+      ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'],
+      ['MLS Number', 'mlsNumber'], ['City', 'city'], ['Province', 'province'],
       ['Created By', record => record.createdBy?.name || ''], ['Created By Email', record => record.createdBy?.email || ''],
       ['Created At', record => record.createdAt ? new Date(record.createdAt).toISOString() : '']
     ];
@@ -180,7 +180,7 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'email', 'seller', 'reviewer', 'yearBuilt', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'source', 'officeLead', 'fileId', 'actualClosingDate'];
+    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'email', 'seller', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
     const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: updates }, { new: true, runValidators: true });
     if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
