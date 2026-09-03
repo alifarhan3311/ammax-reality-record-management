@@ -13,7 +13,9 @@ const transactionSchema = new mongoose.Schema({
   officeLead: String, actualClosingDate: String,
   contacts: { type: mongoose.Schema.Types.Mixed, default: {} },
   commission: { type: mongoose.Schema.Types.Mixed, default: {} },
-  checklist: { type: mongoose.Schema.Types.Mixed, default: [] }
+  checklist: { type: mongoose.Schema.Types.Mixed, default: [] },
+  receipts: { type: mongoose.Schema.Types.Mixed, default: [] },
+  invoices: { type: mongoose.Schema.Types.Mixed, default: [] }
 }, { timestamps: true });
 
 export default mongoose.model('Transaction', transactionSchema);

@@ -11,6 +11,10 @@ import { createPrivateKey } from 'node:crypto';
 import Transaction from './models/Transaction.js';
 import User from './models/User.js';
 import Counter from './models/Counter.js';
+import dns from 'node:dns';
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch {}
 
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
@@ -208,10 +212,11 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not delete transaction' }); }
 });
 
-for (const section of ['contacts', 'commission', 'checklist']) {
+for (const section of ['contacts', 'commission', 'checklist', 'receipts', 'invoices']) {
   app.put(`/api/transactions/:id/${section}`, requireAuth, async (req, res) => {
     try {
-      const value = section === 'checklist' ? (Array.isArray(req.body.checklist) ? req.body.checklist : []) : (req.body[section] || {});
+      const isArraySection = ['checklist', 'receipts', 'invoices'].includes(section);
+      const value = isArraySection ? (Array.isArray(req.body[section]) ? req.body[section] : []) : (req.body[section] || {});
       const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: { [section]: value } }, { new: true, runValidators: true });
       if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
     } catch (error) { res.status(500).json({ message: `Could not save ${section}`, error: error.message }); }

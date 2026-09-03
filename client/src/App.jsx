@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Download, Eye, FilePlus2, LogOut, Moon, Pencil, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
@@ -512,6 +512,1147 @@ function ChecklistForm({ transaction, onUpdated, user }) {
   </div>;
 }
 
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) return dateStr;
+  const parts = String(dateStr).split(/[-T :]/);
+  if (parts.length >= 3 && parts[0].length === 4) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const hours = parts[3] ? parseInt(parts[3], 10) : 0;
+    const minutes = parts[4] ? parseInt(parts[4], 10) : 0;
+    return new Date(year, month, day, hours, minutes);
+  }
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+const formatReceiptDateTime = (val) => {
+  if (!val) return '—';
+  const d = parseLocalDate(val);
+  if (!d) return String(val);
+  const datePart = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  if (String(val).includes('T') && String(val).split('T')[1]) {
+    const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${datePart} ${timePart}`;
+  }
+  return datePart;
+};
+
+const formatDateWithOrdinal = (dateStr) => {
+  if (!dateStr) return '—';
+  const d = parseLocalDate(dateStr);
+  if (!d) return String(dateStr);
+  const month = d.toLocaleString('en-US', { month: 'long' });
+  const day = d.getDate();
+  const year = d.getFullYear();
+  const ordinal = (day % 10 === 1 && day !== 11) ? 'st' : (day % 10 === 2 && day !== 12) ? 'nd' : (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+  return `${month} ${day}${ordinal}, ${year}`;
+};
+
+const formatCAD = (amount) => {
+  if (amount === '' || amount === null || amount === undefined || isNaN(Number(amount))) return '$0.00';
+  return Number(amount).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
+};
+
+function ReceiptDocument({ receipt }) {
+  if (!receipt) return null;
+  return (
+    <div className="exact-receipt-doc">
+      <div className="receipt-header-banner">
+        <div className="receipt-logo-container">
+          <img src="/logo.png" alt="AMMAX REALTY INC." className="receipt-logo-img" />
+        </div>
+        <div className="receipt-title-text">RECEIPT</div>
+      </div>
+
+      <div className="receipt-disclaimer-block">
+        <p>IF DEPOSIT MONEY IS NOT CERTIFIED, FUNDS MAY ONLY BE REIMBURSED 15 BANKING DAYS FROM DATE OF DEPOSIT</p>
+        <p>ACCEPTANCE OF THIS DEPOSIT AND ISSUANCE OF THIS RECEIPT DOES NOT VOID THE SELLER'S/LANDLORD'S RIGHT TO CANCEL THE TRANSACTION IF SUCH DEPOSIT WAS NOT DELIVERED AS PER THE EXACT TERMS OF THE AGREEMENT.</p>
+      </div>
+
+      <table className="receipt-data-table">
+        <tbody>
+          <tr>
+            <td className="receipt-label-cell">DATE &amp; TIME:</td>
+            <td className="receipt-value-cell">{formatReceiptDateTime(receipt.dateTime)}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">BRANCH:</td>
+            <td className="receipt-value-cell">{receipt.branch || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">ITEM RECEIVED:</td>
+            <td className="receipt-value-cell">{receipt.itemReceived || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">FROM:</td>
+            <td className="receipt-value-cell">{receipt.from || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">AMOUNT:</td>
+            <td className="receipt-value-cell">{formatCAD(receipt.amount)}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">PAYABLE TO:</td>
+            <td className="receipt-value-cell">{receipt.payableTo || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">REGARDING:</td>
+            <td className="receipt-value-cell">{receipt.regarding || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">AMMAX AGENT NAME:</td>
+            <td className="receipt-value-cell">{receipt.agentName || '—'}</td>
+          </tr>
+          <tr>
+            <td className="receipt-label-cell">RECEIVED BY:</td>
+            <td className="receipt-value-cell">{receipt.receivedBy || '—'}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function InvoiceDocument({ invoice, transaction }) {
+  if (!invoice) return null;
+  const amountNum = Number(invoice.amount) || 0;
+  const hstRate = invoice.hstPercent !== '' && invoice.hstPercent !== undefined ? Number(invoice.hstPercent) : 13;
+  const hstAmount = (amountNum * hstRate) / 100;
+  const balanceDue = amountNum + hstAmount;
+
+  return (
+    <div className="exact-invoice-doc">
+      <div className="invoice-header-top">
+        <div className="invoice-header-logo">
+          <img src="/logo.png" alt="AMMAX REALTY INC." className="invoice-logo-img" />
+        </div>
+        <div className="invoice-header-brokerage">
+          <div className="invoice-brokerage-title">AMMAX REALTY INC.</div>
+          <div className="invoice-brokerage-sub">Brokerage</div>
+          <div className="invoice-brokerage-line">3001 Markham Road #20, Scarborough, ON M1X 1L6</div>
+          <div className="invoice-brokerage-line">Phone: (416) 822-2842 | behomeowner@gmail.com</div>
+        </div>
+      </div>
+
+      <div className="invoice-gold-divider"></div>
+
+      <div className="invoice-title-row">
+        <div>
+          <h1 className="invoice-main-title">INVOICE</h1>
+          <div className="invoice-main-sub">Payment Receipt</div>
+        </div>
+        <div className="invoice-meta-table">
+          <div className="invoice-meta-row">
+            <span className="invoice-meta-label">Invoice No.</span>
+            <strong className="invoice-meta-value">{invoice.invoiceNumber || '—'}</strong>
+          </div>
+          <div className="invoice-meta-row">
+            <span className="invoice-meta-label">Date Issued:</span>
+            <span className="invoice-meta-value">{formatDateWithOrdinal(invoice.dateIssued)}</span>
+          </div>
+          <div className="invoice-meta-row">
+            <span className="invoice-meta-label">Closing Date:</span>
+            <span className="invoice-meta-value">{formatDateWithOrdinal(invoice.closingDate)}</span>
+          </div>
+          <div className="invoice-meta-row">
+            <span className="invoice-meta-label">Agreement Date:</span>
+            <span className="invoice-meta-value">{formatDateWithOrdinal(invoice.agreementDate)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="invoice-grey-boxes-grid">
+        <div className="invoice-grey-box">
+          <div className="invoice-box-heading">BILLED TO</div>
+          <div className="invoice-box-line"><span>Name :</span> <span>{invoice.billedToName || '—'}</span></div>
+          <div className="invoice-box-line"><span>Address :</span> <span>{invoice.billedToAddress || '—'}</span></div>
+          <div className="invoice-box-line"><span>Tel :</span> <span>{invoice.billedToTel || '—'}</span></div>
+          {invoice.billedToEmail && <div className="invoice-box-line"><span>Email :</span> <span>{invoice.billedToEmail}</span></div>}
+        </div>
+        <div className="invoice-grey-box">
+          <div className="invoice-box-heading">PROPERTY / CLIENT DETAILS</div>
+          <div className="invoice-box-line"><span>Address:</span> <span>{invoice.propertyAddress || transaction?.address || '—'}</span></div>
+          <div className="invoice-box-line"><span>Clients:</span> <span>{invoice.clientNames || '—'}</span></div>
+        </div>
+      </div>
+
+      <table className="invoice-items-table">
+        <thead>
+          <tr>
+            <th className="invoice-th-desc">DESCRIPTION</th>
+            <th className="invoice-th-qty">QTY</th>
+            <th className="invoice-th-rate">RATE</th>
+            <th className="invoice-th-amount">AMOUNT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="invoice-td-desc">
+              <div className="invoice-item-title">{invoice.descriptionTitle || 'Real Estate Commission'}</div>
+              <div className="invoice-item-addr">{invoice.descriptionAddress || transaction?.address || ''}</div>
+              <div className="invoice-item-note">{invoice.descriptionNote || ''}</div>
+            </td>
+            <td className="invoice-td-qty">{invoice.qty || 1}</td>
+            <td className="invoice-td-rate">{formatCAD(invoice.rate)}</td>
+            <td className="invoice-td-amount">{formatCAD(invoice.amount)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="invoice-totals-wrapper">
+        <div className="invoice-totals-container">
+          <div className="invoice-totals-line">
+            <span className="invoice-totals-label">Subtotal:</span>
+            <span className="invoice-totals-value">{formatCAD(invoice.amount)}</span>
+          </div>
+          <div className="invoice-totals-line hst-line">
+            <div className="invoice-hst-labels">
+              <span>HST ({invoice.hstPercent || 13}%):</span>
+              <small>(Harmonized Sales Tax No {invoice.taxNumber || '773580436 RT0001'})</small>
+            </div>
+            <span className="invoice-totals-value">{formatCAD(hstAmount)}</span>
+          </div>
+          <div className="invoice-balance-due-box">
+            <span className="invoice-balance-label">BALANCE DUE:</span>
+            <span className="invoice-balance-amount">{formatCAD(balanceDue)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="invoice-payment-section">
+        <div className="invoice-payment-heading">PAYMENT DETAILS</div>
+        <div className="invoice-payment-sub">We prefer Commission Payments via EFT (Electronic Funds Transfer)</div>
+        <div className="invoice-payment-details-box">
+          <div className="invoice-payment-col">
+            <div className="invoice-payment-block-title">EFT / DIRECT DEPOSIT</div>
+            <div><strong>Financial Institution:</strong> {invoice.bankName || 'RBC Royal Bank'}</div>
+            <div><strong>Address:</strong> {invoice.bankAddress || '200 Bay Street, Toronto, ON M5J 2T6'}</div>
+            <div><strong>Institution No.:</strong> {invoice.institutionNo || '003'}</div>
+            <div><strong>Transit No.:</strong> {invoice.transitNo || '00002'}</div>
+            <div><strong>Account No.:</strong> {invoice.accountNo || '1081587'}</div>
+          </div>
+          <div className="invoice-payment-col">
+            <div className="invoice-payment-block-title">CHEQUE</div>
+            <div>Make payable to: {invoice.chequePayableTo || 'AMMAX REALTY INC., Brokerage'}</div>
+
+            <div className="invoice-payment-block-title" style={{ marginTop: '10px' }}>WIRE TRANSFER</div>
+            <div>{invoice.wireFeeNote || 'Please add $17.00 to cover bank service fees.'}</div>
+
+            <div className="invoice-payment-block-title" style={{ marginTop: '10px' }}>EFT RECEIPT</div>
+            <div>Please send confirmation to: {invoice.eftReceiptEmail || 'behomeowner@gmail.com'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="invoice-footer-section">
+        <div className="invoice-footer-line"></div>
+        <div className="invoice-footer-brokerage">AMMAX REALTY INC., Brokerage | 3001 Markham Road #20, Scarborough, ON M1X 1L6 | (416) 822-2842</div>
+        <div className="invoice-footer-slogan">Opening Doors to an Exquisite Future</div>
+      </div>
+    </div>
+  );
+}
+
+function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
+  const getInitialForm = () => ({
+    id: '',
+    dateTime: '',
+    branch: '',
+    itemReceived: '',
+    from: '',
+    amount: '',
+    payableTo: '',
+    regarding: '',
+    agentName: '',
+    receivedBy: ''
+  });
+
+  const [form, setForm] = useState(getInitialForm);
+  const [editId, setEditId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [alert, setAlert] = useState(null);
+
+  const receiptsList = Array.isArray(transaction.receipts) ? transaction.receipts : [];
+
+  const update = (field, value) => {
+    setForm(current => ({ ...current, [field]: value }));
+  };
+
+  const handleEdit = (receipt) => {
+    setForm({ ...receipt });
+    setEditId(receipt.id);
+    setAlert({ type: 'success', text: `Editing receipt from ${receipt.from || receipt.dateTime}` });
+  };
+
+  const handleReset = () => {
+    setForm(getInitialForm());
+    setEditId('');
+    setAlert(null);
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    setAlert(null);
+
+    // Validate required fields
+    const missing = [];
+    if (!form.dateTime?.trim()) missing.push('Date & Time');
+    if (!form.branch?.trim()) missing.push('Branch');
+    if (!form.itemReceived?.trim()) missing.push('Item Received');
+    if (!form.from?.trim()) missing.push('From (Payer)');
+    if (!form.amount || Number(form.amount) <= 0) missing.push('Amount');
+    if (!form.payableTo?.trim()) missing.push('Payable To');
+    if (!form.regarding?.trim()) missing.push('Regarding (Property)');
+    if (!form.agentName?.trim()) missing.push('Ammax Agent Name');
+    if (!form.receivedBy?.trim()) missing.push('Received By');
+
+    if (missing.length > 0) {
+      setAlert({
+        type: 'error',
+        text: `Please fill in all required fields: ${missing.join(', ')}.`
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let updatedReceipts = [];
+      if (editId) {
+        updatedReceipts = receiptsList.map(r => r.id === editId ? { ...form, updatedAt: new Date().toISOString() } : r);
+      } else {
+        const newReceipt = {
+          ...form,
+          id: 'rec_' + Date.now(),
+          createdAt: new Date().toISOString()
+        };
+        updatedReceipts = [newReceipt, ...receiptsList];
+      }
+
+      const response = await fetch(`/api/transactions/${transaction._id}/receipts`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipts: updatedReceipts })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not save receipt');
+
+      onUpdated(result);
+      setForm(getInitialForm());
+      setEditId('');
+      setAlert({
+        type: 'success',
+        text: editId ? 'Receipt updated successfully!' : 'Receipt added and saved to records successfully!'
+      });
+    } catch (error) {
+      setAlert({ type: 'error', text: error.message || 'Could not save receipt.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (receiptId) => {
+    if (!window.confirm('Are you sure you want to delete this receipt?')) return;
+    setSaving(true);
+    try {
+      const updatedReceipts = receiptsList.filter(r => r.id !== receiptId);
+      const response = await fetch(`/api/transactions/${transaction._id}/receipts`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipts: updatedReceipts })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not delete receipt');
+      onUpdated(result);
+      if (editId === receiptId) {
+        setForm(getInitialForm());
+        setEditId('');
+      }
+      setAlert({ type: 'success', text: 'Receipt deleted successfully.' });
+    } catch (error) {
+      setAlert({ type: 'error', text: error.message || 'Could not delete receipt.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="records-layout">
+      {/* Left Column: Form */}
+      <section className="records-form-col">
+        <div className="records-col-heading">
+          <div>
+            <span className="eyebrow">Receipt Entry</span>
+            <h2>{editId ? 'Edit Receipt' : 'Add Receipt'}</h2>
+          </div>
+          {editId && <span className="records-badge">Editing Record</span>}
+        </div>
+
+        {alert && (
+          <div className={`records-alert ${alert.type}`} role="alert">
+            <div className="records-alert-content">
+              {alert.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+              <span>{alert.text}</span>
+            </div>
+            <button type="button" className="records-alert-close" onClick={() => setAlert(null)} title="Dismiss">
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={save}>
+          <div className="records-form-grid">
+            <label>
+              <span>Date &amp; Time <b>*</b></span>
+              <input
+                type="datetime-local"
+                value={form.dateTime}
+                onChange={e => update('dateTime', e.target.value)}
+                required
+              />
+            </label>
+
+            <label>
+              <span>Branch <b>*</b></span>
+              <input
+                type="text"
+                value={form.branch}
+                onChange={e => update('branch', e.target.value)}
+                placeholder="e.g. Toronto"
+                required
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Item Received <b>*</b></span>
+              <input
+                type="text"
+                list="item-received-options"
+                value={form.itemReceived}
+                onChange={e => update('itemReceived', e.target.value)}
+                placeholder="e.g. Bank Deposit, Certified Cheque, Wire Transfer"
+                required
+              />
+              <datalist id="item-received-options">
+                <option value="Bank Deposit" />
+                <option value="Certified Cheque" />
+                <option value="Bank Draft" />
+                <option value="Wire Transfer" />
+                <option value="EFT / Direct Deposit" />
+              </datalist>
+            </label>
+
+            <label className="full-span">
+              <span>From (Payer) <b>*</b></span>
+              <input
+                type="text"
+                value={form.from}
+                onChange={e => update('from', e.target.value)}
+                placeholder="Names of buyers / payers"
+                required
+              />
+            </label>
+
+            <label>
+              <span>Amount ($) <b>*</b></span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatNumberInput(form.amount)}
+                onChange={e => update('amount', cleanNumberInput(e.target.value))}
+                placeholder="e.g. 7,200.00"
+                required
+              />
+            </label>
+
+            <label>
+              <span>Payable To <b>*</b></span>
+              <input
+                type="text"
+                value={form.payableTo}
+                onChange={e => update('payableTo', e.target.value)}
+                required
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Regarding (Property) <b>*</b></span>
+              <input
+                type="text"
+                value={form.regarding}
+                onChange={e => update('regarding', e.target.value)}
+                placeholder="Property address"
+                required
+              />
+            </label>
+
+            <label>
+              <span>Ammax Agent Name <b>*</b></span>
+              <input
+                type="text"
+                value={form.agentName}
+                onChange={e => update('agentName', e.target.value)}
+                required
+              />
+            </label>
+
+            <label>
+              <span>Received By <b>*</b></span>
+              <input
+                type="text"
+                value={form.receivedBy}
+                onChange={e => update('receivedBy', e.target.value)}
+                required
+              />
+            </label>
+          </div>
+
+          <div className="records-form-actions">
+            {alert && <p className={alert.type}>{alert.text}</p>}
+            {editId && (
+              <button type="button" className="secondary" onClick={handleReset}>
+                <RotateCcw size={13} style={{ marginRight: 5 }} /> Cancel
+              </button>
+            )}
+            <button className="primary" disabled={saving}>
+              {saving ? 'Saving…' : editId ? 'Update Receipt' : '+ Add Receipt'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Right Column: Records List */}
+      <section className="records-list-col">
+        <div className="records-col-heading">
+          <div>
+            <span className="eyebrow">Records List</span>
+            <h2>Added Receipts</h2>
+          </div>
+          <span className="records-badge">{receiptsList.length} {receiptsList.length === 1 ? 'Receipt' : 'Receipts'}</span>
+        </div>
+
+        {receiptsList.length === 0 ? (
+          <div className="records-empty-card">
+            <Receipt size={36} color="var(--brand)" style={{ opacity: 0.8 }} />
+            <h4>No receipts created yet</h4>
+            <p>Fill out the form on the left to generate and print receipts for this transaction.</p>
+          </div>
+        ) : (
+          <div className="records-cards-container">
+            {receiptsList.map((item) => (
+              <article className={`record-card-item ${editId === item.id ? 'is-editing' : ''}`} key={item.id}>
+                <div className="record-card-header">
+                  <span className="record-type-tag">{item.itemReceived || 'Receipt'}</span>
+                  <span className="record-amount-tag">{formatCAD(item.amount)}</span>
+                </div>
+
+                <div className="record-card-body">
+                  <div className="record-card-prop full">
+                    <span>From</span>
+                    <strong>{item.from || '—'}</strong>
+                  </div>
+                  <div className="record-card-prop">
+                    <span>Date &amp; Time</span>
+                    <strong>{item.dateTime || '—'}</strong>
+                  </div>
+                  <div className="record-card-prop">
+                    <span>Branch</span>
+                    <strong>{item.branch || '—'}</strong>
+                  </div>
+                  <div className="record-card-prop">
+                    <span>Agent</span>
+                    <strong>{item.agentName || '—'}</strong>
+                  </div>
+                  <div className="record-card-prop">
+                    <span>Received By</span>
+                    <strong>{item.receivedBy || '—'}</strong>
+                  </div>
+                </div>
+
+                <div className="record-card-actions">
+                  <button
+                    type="button"
+                    className="record-act-btn print-btn"
+                    onClick={() => onPrint(item)}
+                    title="Print exact receipt"
+                  >
+                    <Printer size={13} /> Print
+                  </button>
+                  <button
+                    type="button"
+                    className="record-act-btn"
+                    onClick={() => onPreview(item)}
+                    title="Preview receipt"
+                  >
+                    <Eye size={13} /> Preview
+                  </button>
+                  <button
+                    type="button"
+                    className="record-act-btn"
+                    onClick={() => handleEdit(item)}
+                    title="Edit receipt"
+                  >
+                    <Pencil size={13} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="record-act-btn delete-btn"
+                    onClick={() => handleDelete(item.id)}
+                    title="Delete receipt"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
+  const getInitialForm = () => ({
+    id: '',
+    invoiceNumber: '',
+    dateIssued: '',
+    closingDate: '',
+    agreementDate: '',
+    billedToName: '',
+    billedToAddress: '',
+    billedToTel: '',
+    billedToEmail: '',
+    propertyAddress: '',
+    clientNames: '',
+    descriptionTitle: '',
+    descriptionAddress: '',
+    descriptionNote: '',
+    qty: '',
+    rate: '',
+    amount: '',
+    hstPercent: '',
+    taxNumber: '',
+    bankName: '',
+    bankAddress: '',
+    institutionNo: '',
+    transitNo: '',
+    accountNo: '',
+    chequePayableTo: '',
+    wireFeeNote: '',
+    eftReceiptEmail: ''
+  });
+
+  const [form, setForm] = useState(getInitialForm);
+  const [editId, setEditId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [alert, setAlert] = useState(null);
+
+  const invoicesList = Array.isArray(transaction.invoices) ? transaction.invoices : [];
+
+  const update = (field, value) => {
+    setForm(current => ({ ...current, [field]: value }));
+  };
+
+  const amountNum = Number(form.amount) || 0;
+  const hstRate = form.hstPercent !== '' && form.hstPercent !== undefined ? Number(form.hstPercent) : (amountNum ? 13 : 0);
+  const hstAmount = (amountNum * hstRate) / 100;
+  const balanceDue = amountNum + hstAmount;
+
+  const handleEdit = (invoice) => {
+    setForm({ ...invoice });
+    setEditId(invoice.id);
+    setAlert({ type: 'success', text: `Editing invoice #${invoice.invoiceNumber}` });
+  };
+
+  const handleReset = () => {
+    setForm(getInitialForm());
+    setEditId('');
+    setAlert(null);
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    setAlert(null);
+
+    // Validate required fields
+    const missing = [];
+    if (!form.invoiceNumber?.trim()) missing.push('Invoice No.');
+    if (!form.dateIssued?.trim()) missing.push('Date Issued');
+    if (!form.billedToName?.trim()) missing.push('Billed To (Name)');
+    if (!form.propertyAddress?.trim()) missing.push('Property Address');
+    if (!form.clientNames?.trim()) missing.push('Clients Name(s)');
+    if (!form.descriptionTitle?.trim()) missing.push('Description Title');
+    if (!form.amount || Number(form.amount) <= 0) missing.push('Amount / Subtotal');
+
+    if (missing.length > 0) {
+      setAlert({
+        type: 'error',
+        text: `Please fill in all required fields: ${missing.join(', ')}.`
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let updatedInvoices = [];
+      if (editId) {
+        updatedInvoices = invoicesList.map(inv => inv.id === editId ? { ...form, updatedAt: new Date().toISOString() } : inv);
+      } else {
+        const newInvoice = {
+          ...form,
+          id: 'inv_' + Date.now(),
+          createdAt: new Date().toISOString()
+        };
+        updatedInvoices = [newInvoice, ...invoicesList];
+      }
+
+      const response = await fetch(`/api/transactions/${transaction._id}/invoices`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoices: updatedInvoices })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not save invoice');
+
+      onUpdated(result);
+      setForm(getInitialForm());
+      setEditId('');
+      setAlert({
+        type: 'success',
+        text: editId ? 'Invoice updated successfully!' : 'Invoice generated and saved to records successfully!'
+      });
+    } catch (error) {
+      setAlert({ type: 'error', text: error.message || 'Could not save invoice.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (invoiceId) => {
+    if (!window.confirm('Are you sure you want to delete this invoice?')) return;
+    setSaving(true);
+    try {
+      const updatedInvoices = invoicesList.filter(inv => inv.id !== invoiceId);
+      const response = await fetch(`/api/transactions/${transaction._id}/invoices`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoices: updatedInvoices })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not delete invoice');
+      onUpdated(result);
+      if (editId === invoiceId) {
+        setForm(getInitialForm());
+        setEditId('');
+      }
+      setAlert({ type: 'success', text: 'Invoice deleted successfully.' });
+    } catch (error) {
+      setAlert({ type: 'error', text: error.message || 'Could not delete invoice.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="records-layout">
+      {/* Left Column: Form */}
+      <section className="records-form-col">
+        <div className="records-col-heading">
+          <div>
+            <span className="eyebrow">Invoice Generator</span>
+            <h2>{editId ? 'Edit Invoice' : 'Create Invoice'}</h2>
+          </div>
+          {editId && <span className="records-badge">Editing Record</span>}
+        </div>
+
+        {alert && (
+          <div className={`records-alert ${alert.type}`} role="alert">
+            <div className="records-alert-content">
+              {alert.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+              <span>{alert.text}</span>
+            </div>
+            <button type="button" className="records-alert-close" onClick={() => setAlert(null)} title="Dismiss">
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={save}>
+          <div className="records-subheading">Invoice &amp; Dates</div>
+          <div className="records-form-grid">
+            <label>
+              <span>Invoice No. <b>*</b></span>
+              <input
+                type="text"
+                value={form.invoiceNumber}
+                onChange={e => update('invoiceNumber', e.target.value)}
+                placeholder="e.g. 0002"
+                required
+              />
+            </label>
+
+            <label>
+              <span>Date Issued <b>*</b></span>
+              <input
+                type="date"
+                value={form.dateIssued}
+                onChange={e => update('dateIssued', e.target.value)}
+                required
+              />
+            </label>
+
+            <label>
+              <span>Closing Date</span>
+              <input
+                type="date"
+                value={form.closingDate}
+                onChange={e => update('closingDate', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Agreement Date</span>
+              <input
+                type="date"
+                value={form.agreementDate}
+                onChange={e => update('agreementDate', e.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="records-subheading">Billed To</div>
+          <div className="records-form-grid">
+            <label className="full-span">
+              <span>Billed To Name <b>*</b></span>
+              <input
+                type="text"
+                value={form.billedToName}
+                onChange={e => update('billedToName', e.target.value)}
+                placeholder="e.g. Royal Lepage your community Realty"
+                required
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Billed To Address</span>
+              <input
+                type="text"
+                value={form.billedToAddress}
+                onChange={e => update('billedToAddress', e.target.value)}
+                placeholder="e.g. 8854 Yonge St, Richmond Hill, ON L4C 0T4"
+              />
+            </label>
+
+            <label>
+              <span>Tel</span>
+              <input
+                type="text"
+                value={form.billedToTel}
+                onChange={e => update('billedToTel', e.target.value)}
+                placeholder="e.g. 905 731 2000"
+              />
+            </label>
+
+            <label>
+              <span>Email</span>
+              <input
+                type="email"
+                value={form.billedToEmail}
+                onChange={e => update('billedToEmail', e.target.value)}
+                placeholder="e.g. office@royallepage.ca"
+              />
+            </label>
+          </div>
+
+          <div className="records-subheading">Property &amp; Client Details</div>
+          <div className="records-form-grid">
+            <label className="full-span">
+              <span>Property Address <b>*</b></span>
+              <input
+                type="text"
+                value={form.propertyAddress}
+                onChange={e => update('propertyAddress', e.target.value)}
+                required
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Clients Name(s) <b>*</b></span>
+              <input
+                type="text"
+                value={form.clientNames}
+                onChange={e => update('clientNames', e.target.value)}
+                placeholder="Client / Buyer / Seller Names"
+                required
+              />
+            </label>
+          </div>
+
+          <div className="records-subheading">Line Item &amp; Commission Calculation</div>
+          <div className="records-form-grid">
+            <label className="full-span">
+              <span>Description Title <b>*</b></span>
+              <input
+                type="text"
+                value={form.descriptionTitle}
+                onChange={e => update('descriptionTitle', e.target.value)}
+                required
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Description Note / Formula</span>
+              <input
+                type="text"
+                value={form.descriptionNote}
+                onChange={e => update('descriptionNote', e.target.value)}
+                placeholder="e.g. 2.5% net of HST of purchase price $ 1,240,000.00"
+              />
+            </label>
+
+            <label>
+              <span>Quantity</span>
+              <input
+                type="number"
+                value={form.qty}
+                onChange={e => update('qty', e.target.value)}
+                min="1"
+              />
+            </label>
+
+            <label>
+              <span>Rate ($)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatNumberInput(form.rate)}
+                onChange={e => update('rate', cleanNumberInput(e.target.value))}
+                placeholder="Base rate / price"
+              />
+            </label>
+
+            <label>
+              <span>Amount / Subtotal ($) <b>*</b></span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={formatNumberInput(form.amount)}
+                onChange={e => update('amount', cleanNumberInput(e.target.value))}
+                placeholder="Commission amount"
+                required
+              />
+            </label>
+
+            <label>
+              <span>HST Rate (%)</span>
+              <input
+                type="number"
+                step="0.1"
+                value={form.hstPercent}
+                onChange={e => update('hstPercent', e.target.value)}
+              />
+            </label>
+
+            <label className="full-span">
+              <span>Tax Registration No.</span>
+              <input
+                type="text"
+                value={form.taxNumber}
+                onChange={e => update('taxNumber', e.target.value)}
+              />
+            </label>
+
+            <div className="full-span records-calc-preview">
+              <div>
+                <span>Subtotal: {formatCAD(form.amount)} + HST ({form.hstPercent}%): {formatCAD(hstAmount)}</span>
+              </div>
+              <div className="balance-badge">
+                <span>BALANCE DUE:</span>
+                <strong>{formatCAD(balanceDue)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="records-subheading">Payment Instructions</div>
+          <div className="records-form-grid">
+            <label>
+              <span>Financial Institution</span>
+              <input
+                type="text"
+                value={form.bankName}
+                onChange={e => update('bankName', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Bank Address</span>
+              <input
+                type="text"
+                value={form.bankAddress}
+                onChange={e => update('bankAddress', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Institution No.</span>
+              <input
+                type="text"
+                value={form.institutionNo}
+                onChange={e => update('institutionNo', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Transit No.</span>
+              <input
+                type="text"
+                value={form.transitNo}
+                onChange={e => update('transitNo', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Account No.</span>
+              <input
+                type="text"
+                value={form.accountNo}
+                onChange={e => update('accountNo', e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Cheque Payable To</span>
+              <input
+                type="text"
+                value={form.chequePayableTo}
+                onChange={e => update('chequePayableTo', e.target.value)}
+              />
+            </label>
+
+            <label className="full-span">
+              <span>EFT Confirmation Email</span>
+              <input
+                type="email"
+                value={form.eftReceiptEmail}
+                onChange={e => update('eftReceiptEmail', e.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="records-form-actions">
+            {alert && <p className={alert.type}>{alert.text}</p>}
+            {editId && (
+              <button type="button" className="secondary" onClick={handleReset}>
+                <RotateCcw size={13} style={{ marginRight: 5 }} /> Cancel
+              </button>
+            )}
+            <button className="primary" disabled={saving}>
+              {saving ? 'Saving…' : editId ? 'Update Invoice' : '+ Save Invoice'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Right Column: Records List */}
+      <section className="records-list-col">
+        <div className="records-col-heading">
+          <div>
+            <span className="eyebrow">Records List</span>
+            <h2>Added Invoices</h2>
+          </div>
+          <span className="records-badge">{invoicesList.length} {invoicesList.length === 1 ? 'Invoice' : 'Invoices'}</span>
+        </div>
+
+        {invoicesList.length === 0 ? (
+          <div className="records-empty-card">
+            <FileText size={36} color="var(--brand)" style={{ opacity: 0.8 }} />
+            <h4>No invoices created yet</h4>
+            <p>Use the form on the left to generate and print commission invoices for this deal.</p>
+          </div>
+        ) : (
+          <div className="records-cards-container">
+            {invoicesList.map((item) => {
+              const itemAmt = Number(item.amount) || 0;
+              const itemHst = (itemAmt * (Number(item.hstPercent) || 13)) / 100;
+              const itemTotal = itemAmt + itemHst;
+
+              return (
+                <article className={`record-card-item ${editId === item.id ? 'is-editing' : ''}`} key={item.id}>
+                  <div className="record-card-header">
+                    <span className="record-type-tag">Invoice #{item.invoiceNumber || '—'}</span>
+                    <span className="record-amount-tag invoice-due">{formatCAD(itemTotal)}</span>
+                  </div>
+
+                  <div className="record-card-body">
+                    <div className="record-card-prop full">
+                      <span>Billed To</span>
+                      <strong>{item.billedToName || '—'}</strong>
+                    </div>
+                    <div className="record-card-prop">
+                      <span>Date Issued</span>
+                      <strong>{formatDateWithOrdinal(item.dateIssued)}</strong>
+                    </div>
+                    <div className="record-card-prop">
+                      <span>Subtotal</span>
+                      <strong>{formatCAD(item.amount)}</strong>
+                    </div>
+                    <div className="record-card-prop">
+                      <span>Closing Date</span>
+                      <strong>{formatDateWithOrdinal(item.closingDate)}</strong>
+                    </div>
+                    <div className="record-card-prop">
+                      <span>HST ({item.hstPercent || 13}%)</span>
+                      <strong>{formatCAD(itemHst)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="record-card-actions">
+                    <button
+                      type="button"
+                      className="record-act-btn print-btn"
+                      onClick={() => onPrint(item)}
+                      title="Print exact invoice"
+                    >
+                      <Printer size={13} /> Print
+                    </button>
+                    <button
+                      type="button"
+                      className="record-act-btn"
+                      onClick={() => onPreview(item)}
+                      title="Preview invoice"
+                    >
+                      <Eye size={13} /> Preview
+                    </button>
+                    <button
+                      type="button"
+                      className="record-act-btn"
+                      onClick={() => handleEdit(item)}
+                      title="Edit invoice"
+                    >
+                      <Pencil size={13} /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="record-act-btn delete-btn"
+                      onClick={() => handleDelete(item.id)}
+                      title="Delete invoice"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function TransactionDetail({ user, onLogout }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -519,11 +1660,38 @@ function TransactionDetail({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('Transaction');
   const [loading, setLoading] = useState(true);
   const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark');
-  useEffect(() => { fetch(`/api/transactions/${id}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setTransaction).catch(() => setTransaction(false)).finally(() => setLoading(false)); }, [id]);
-  useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [printingDoc, setPrintingDoc] = useState(null);
+
+  useEffect(() => {
+    fetch(`/api/transactions/${id}`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(setTransaction)
+      .catch(() => setTransaction(false))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  }, [dark]);
+
+  const triggerPrint = (type, data) => {
+    setPrintingDoc({ type, data });
+    setTimeout(() => {
+      window.print();
+    }, 180);
+  };
+
+  useEffect(() => {
+    const handleAfterPrint = () => setPrintingDoc(null);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => window.removeEventListener('afterprint', handleAfterPrint);
+  }, []);
+
   if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
   if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
   const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : (key === 'coBuyerAgent' ? (transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '')) : transaction[key]) || '—';
+
   return <>
     <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
     <main className="detail-page">
@@ -534,12 +1702,75 @@ function TransactionDetail({ user, onLogout }) {
       </div>
       <section className="record-panel">
         <div className="tabs" role="tablist">
-          {['Transaction', 'Contacts', 'Commission', 'Checklist'].map(tab => <button key={tab} role="tab" aria-selected={activeTab === tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}
+          {['Transaction', 'Contacts', 'Commission', 'Checklist', 'Receipt', 'Invoice'].map(tab => (
+            <button
+              key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
+              className={activeTab === tab ? 'active' : ''}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
         <div className="summary-grid">{summaryFields.map(([label, key]) => <div className="detail" key={key}><span>{label}</span><strong className={key === 'email' ? 'email-value' : ''}>{valueFor(key)}</strong></div>)}</div>
-        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} /> : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} /> : <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />}
+        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} />
+          : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} />
+          : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} />
+          : activeTab === 'Checklist' ? <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />
+          : activeTab === 'Receipt' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
+          : <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} />}
       </section>
     </main>
+
+    {/* Preview Modal */}
+    {previewDoc && (
+      <div className="preview-modal-backdrop" onClick={e => e.target === e.currentTarget && setPreviewDoc(null)}>
+        <div className="preview-modal-header">
+          <h3>
+            <FileText size={18} color="var(--brand-dark)" />
+            {previewDoc.type === 'receipt' ? 'Receipt Preview' : 'Invoice Preview'}
+          </h3>
+          <div className="preview-header-actions">
+            <button
+              type="button"
+              className="primary"
+              style={{ padding: '8px 18px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => triggerPrint(previewDoc.type, previewDoc.data)}
+            >
+              <Printer size={15} /> Print Document
+            </button>
+            <button
+              type="button"
+              className="close"
+              onClick={() => setPreviewDoc(null)}
+              aria-label="Close Preview"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        <div className="preview-paper-sheet">
+          {previewDoc.type === 'receipt' ? (
+            <ReceiptDocument receipt={previewDoc.data} transaction={transaction} />
+          ) : (
+            <InvoiceDocument invoice={previewDoc.data} transaction={transaction} />
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* Print Mount - Rendered only when printing */}
+    {printingDoc && (
+      <div id="print-mount" className="print-mount">
+        {printingDoc.type === 'receipt' ? (
+          <ReceiptDocument receipt={printingDoc.data} transaction={transaction} />
+        ) : (
+          <InvoiceDocument invoice={printingDoc.data} transaction={transaction} />
+        )}
+      </div>
+    )}
   </>;
 }
 
