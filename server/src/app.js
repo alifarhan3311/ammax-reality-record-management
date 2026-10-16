@@ -7,10 +7,11 @@ import mongoose from 'mongoose';
 import multer from 'multer';
 import { google } from 'googleapis';
 import { Readable } from 'node:stream';
-import { createPrivateKey } from 'node:crypto';
 import Transaction from './models/Transaction.js';
 import User from './models/User.js';
 import Counter from './models/Counter.js';
+import AuditLog from './models/AuditLog.js';
+import { checklistChangesEmail, dailyReminderEmail, sendEmail } from './services/email.js';
 import dns from 'node:dns';
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -37,7 +38,7 @@ export const connectDatabase = async () => {
   return mongoose.connection;
 };
 
-const publicUser = user => ({ id: user._id, name: user.name, email: user.email, role: user.role });
+const publicUser = user => ({ id: user._id, name: user.name, email: user.email, role: user.role === 'user' ? 'agent' : user.role, isActive: user.isActive, mustChangePassword: user.mustChangePassword, lastLoginAt: user.lastLoginAt, createdAt: user.createdAt });
 const tokenSecret = () => {
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
   return process.env.JWT_SECRET;
@@ -62,7 +63,13 @@ const requireAuth = async (req, res, next) => {
     req.user = user; next();
   } catch { res.status(401).json({ message: 'Session expired. Please sign in again.' }); }
 };
-const ownerFilter = (req, id) => req.user.role === 'admin' ? { _id: id } : { _id: id, createdBy: req.user._id };
+const requireAdmin = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ message: 'Administrator access required' });
+const agentOwnership = userId => ({ $or: [{ assignedAgent: userId }, { assignedAgent: { $exists: false }, createdBy: userId }] });
+const ownerFilter = (req, id) => req.user.role === 'admin' ? { _id: id } : { _id: id, ...agentOwnership(req.user._id) };
+const writeAudit = async (req, action, details = {}) => {
+  try { await AuditLog.create({ actor: req.user?._id, action, targetUser: details.targetUser, transaction: details.transaction, details: details.data || {}, ipAddress: req.ip }); }
+  catch (error) { console.error('Audit log failed:', error.message); }
+};
 const dealCounterId = 'transaction-deal-number';
 const initializeDealNumbers = async () => {
   const existingCounter = await Counter.findById(dealCounterId);
@@ -89,39 +96,101 @@ const nextDealNumber = async () => {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.name, authConfigured: Boolean(process.env.JWT_SECRET) }));
 app.post('/api/auth/signup', async (req, res) => {
-  try {
-    const name = String(req.body.name || '').trim(); const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
-    if (name.length < 2) return res.status(400).json({ message: 'Please enter your full name' });
-    if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Please enter a valid email' });
-    if (password.length < 8) return res.status(400).json({ message: 'Password must contain at least 8 characters' });
-    if (await User.exists({ email })) return res.status(409).json({ message: 'An account with this email already exists' });
-    const user = await User.create({ name, email, passwordHash: await bcrypt.hash(password, 12), role: 'user' });
-    setAuthCookie(res, user); res.status(201).json({ user: publicUser(user) });
-  } catch (error) { res.status(500).json({ message: 'Could not create account', error: error.message }); }
+  res.status(403).json({ message: 'Public signup is disabled. Contact an administrator.' });
 });
 app.post('/api/auth/login', async (req, res) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user || !user.isActive || !await bcrypt.compare(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password' });
-    setAuthCookie(res, user); res.json({ user: publicUser(user) });
+    user.lastLoginAt = new Date(); await user.save();
+    setAuthCookie(res, user); await writeAudit({ user, ip: req.ip }, 'auth.login'); res.json({ user: publicUser(user) });
   } catch (error) {
     console.error('Login failed:', error.message);
     res.status(500).json({ message: error.message === 'JWT_SECRET is not configured' ? 'Login service is not configured. Add JWT_SECRET in Vercel.' : 'Login service failed', error: error.message });
   }
 });
 app.post('/api/auth/logout', (_req, res) => { res.clearCookie('ammax_session', { path: '/' }); res.json({ message: 'Logged out' }); });
-app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const token = req.cookies.ammax_session;
+    if (!token) return res.json({ user: null });
+    const payload = jwt.verify(token, tokenSecret());
+    const user = await User.findById(payload.sub);
+    if (!user?.isActive) { res.clearCookie('ammax_session', { path: '/' }); return res.json({ user: null }); }
+    res.json({ user: publicUser(user) });
+  } catch {
+    res.clearCookie('ammax_session', { path: '/' });
+    res.json({ user: null });
+  }
+});
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+    if (newPassword.length < 8) return res.status(400).json({ message: 'New password must contain at least 8 characters' });
+    const user = await User.findById(req.user._id).select('+passwordHash');
+    if (!user || !await bcrypt.compare(currentPassword, user.passwordHash)) return res.status(400).json({ message: 'Current password is incorrect' });
+    if (await bcrypt.compare(newPassword, user.passwordHash)) return res.status(400).json({ message: 'New password must be different from the temporary password' });
+    user.passwordHash = await bcrypt.hash(newPassword, 12);
+    user.mustChangePassword = false;
+    user.passwordChangedAt = new Date();
+    await user.save();
+    await writeAudit(req, 'auth.password_changed');
+    res.json({ message: 'Password changed successfully', user: publicUser(user) });
+  } catch (error) { res.status(500).json({ message: 'Could not change password', error: error.message }); }
+});
+
+app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
+  try { res.json((await User.find({ role: { $ne: 'admin' } }).sort({ createdAt: -1 })).map(publicUser)); }
+  catch (error) { res.status(500).json({ message: 'Could not load agents', error: error.message }); }
+});
+app.post('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim(); const email = String(req.body.email || '').trim().toLowerCase(); const password = String(req.body.password || '');
+    if (name.length < 2 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 8) return res.status(400).json({ message: 'Valid name, email and an 8-character password are required' });
+    if (await User.exists({ email })) return res.status(409).json({ message: 'This email is already registered' });
+    const agent = await User.create({ name, email, passwordHash: await bcrypt.hash(password, 12), role: 'agent', isActive: true, mustChangePassword: true, createdBy: req.user._id });
+    await writeAudit(req, 'agent.created', { targetUser: agent._id, data: { name, email } });
+    res.status(201).json(publicUser(agent));
+  } catch (error) { res.status(500).json({ message: 'Could not create agent', error: error.message }); }
+});
+app.patch('/api/admin/users/:id/status', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const agent = await User.findOneAndUpdate({ _id: req.params.id, role: { $ne: 'admin' } }, { $set: { isActive: Boolean(req.body.isActive) } }, { new: true });
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    await writeAudit(req, agent.isActive ? 'agent.activated' : 'agent.deactivated', { targetUser: agent._id }); res.json(publicUser(agent));
+  } catch (error) { res.status(500).json({ message: 'Could not update account', error: error.message }); }
+});
+app.post('/api/admin/users/:id/reset-password', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const password = String(req.body.password || '');
+    if (password.length < 8) return res.status(400).json({ message: 'Password must contain at least 8 characters' });
+    const agent = await User.findOne({ _id: req.params.id, role: { $ne: 'admin' } }).select('+passwordHash');
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    agent.passwordHash = await bcrypt.hash(password, 12); agent.mustChangePassword = true; agent.passwordChangedAt = new Date(); await agent.save();
+    await writeAudit(req, 'agent.password_reset', { targetUser: agent._id }); res.json({ message: 'Password reset successfully' });
+  } catch (error) { res.status(500).json({ message: 'Could not reset password', error: error.message }); }
+});
+app.get('/api/admin/logs', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.action) filter.action = req.query.action;
+    if (req.query.date) { const start = new Date(`${req.query.date}T00:00:00+05:00`); const end = new Date(start); end.setDate(end.getDate() + 1); filter.createdAt = { $gte: start, $lt: end }; }
+    const logs = await AuditLog.find(filter).populate('actor targetUser', 'name email role').populate('transaction', 'address dealNumber').sort({ createdAt: -1 }).limit(500).lean();
+    res.json(logs);
+  } catch (error) { res.status(500).json({ message: 'Could not load activity logs', error: error.message }); }
+});
 
 app.get('/api/transactions', requireAuth, async (req, res) => {
   try {
-    const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
-    res.json(await Transaction.find(filter).populate('createdBy', 'name email role').sort({ createdAt: -1 }).lean());
+    const filter = req.user.role === 'admin' ? {} : agentOwnership(req.user._id);
+    res.json(await Transaction.find(filter).populate('createdBy assignedAgent', 'name email role').sort({ createdAt: -1 }).lean());
   } catch (error) { res.status(500).json({ message: 'Could not load transactions', error: error.message }); }
 });
 app.get('/api/transactions-export/excel', requireAuth, async (req, res) => {
   try {
-    const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
+    const filter = req.user.role === 'admin' ? {} : agentOwnership(req.user._id);
     const records = await Transaction.find(filter).populate('createdBy', 'name email').sort({ createdAt: 1 }).lean();
     const columns = [
       ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
@@ -149,7 +218,7 @@ app.get('/api/contacts/search', requireAuth, async (req, res) => {
   try {
     const query = String(req.query.q || '').trim().toLowerCase();
     if (query.length < 2) return res.json([]);
-    const filter = req.user.role === 'admin' ? {} : { createdBy: req.user._id };
+    const filter = req.user.role === 'admin' ? {} : agentOwnership(req.user._id);
     const transactions = await Transaction.find(filter).select('address contacts createdBy').lean();
     const seen = new Set(); const results = [];
     for (const transaction of transactions) {
@@ -173,13 +242,24 @@ app.get('/api/contacts/search', requireAuth, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not search contacts', error: error.message }); }
 });
 app.get('/api/transactions/:id', requireAuth, async (req, res) => {
-  try { const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('createdBy', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
+  try { const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('createdBy assignedAgent', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not load transaction' }); }
 });
 app.post('/api/transactions', requireAuth, async (req, res) => {
   const { address, agent, buyer, email } = req.body;
   if (![address, agent, buyer, email].every(value => typeof value === 'string' && value.trim())) return res.status(400).json({ message: 'Address, agent, buyer and email are required' });
-  try { res.status(201).json(await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(), createdBy: req.user._id })); }
+  try {
+    let assignedAgent = req.user._id;
+    if (req.user.role === 'admin' && !req.body.assignedAgent) return res.status(400).json({ message: 'Please select an agent for this transaction' });
+    if (req.user.role === 'admin' && req.body.assignedAgent) {
+      const agent = await User.findOne({ _id: req.body.assignedAgent, role: { $in: ['agent', 'user'] }, isActive: true });
+      if (!agent) return res.status(400).json({ message: 'Please select an active agent' });
+      assignedAgent = agent._id;
+    }
+    const record = await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(), createdBy: req.user._id, assignedAgent });
+    await writeAudit(req, 'transaction.created', { transaction: record._id, targetUser: assignedAgent, data: { address: record.address, dealNumber: record.dealNumber } });
+    res.status(201).json(record);
+  }
   catch (error) { res.status(500).json({ message: 'Could not create transaction', error: error.message }); }
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
@@ -187,7 +267,7 @@ app.put('/api/transactions/:id', requireAuth, async (req, res) => {
     const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'email', 'seller', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
     const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: updates }, { new: true, runValidators: true });
-    if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
+    if (!record) return res.status(404).json({ message: 'Transaction not found' }); await writeAudit(req, 'transaction.updated', { transaction: record._id }); res.json(record);
   } catch (error) { res.status(500).json({ message: 'Could not update transaction', error: error.message }); }
 });
 app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
@@ -207,21 +287,51 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
       } catch (error) { driveWarnings.push(error.message); }
     }
     await record.deleteOne();
+    await writeAudit(req, 'transaction.deleted', { data: { address: record.address, dealNumber: record.dealNumber } });
     res.json({ message: 'Transaction deleted successfully', id: record._id, deletedDriveFiles: driveFileIds.length - driveWarnings.length, driveWarnings });
   }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not delete transaction' }); }
 });
 
-for (const section of ['contacts', 'commission', 'checklist', 'receipts', 'invoices']) {
+for (const section of ['contacts', 'commission', 'receipts', 'invoices']) {
   app.put(`/api/transactions/:id/${section}`, requireAuth, async (req, res) => {
     try {
-      const isArraySection = ['checklist', 'receipts', 'invoices'].includes(section);
-      const value = isArraySection ? (Array.isArray(req.body[section]) ? req.body[section] : []) : (req.body[section] || {});
+      const isArraySection = ['receipts', 'invoices'].includes(section);
+      let value = isArraySection ? (Array.isArray(req.body[section]) ? req.body[section] : []) : (req.body[section] || {});
+      if (section === 'commission' && req.user.role !== 'admin') {
+        const existing = await Transaction.findOne(ownerFilter(req, req.params.id)).select('commission').lean();
+        if (!existing) return res.status(404).json({ message: 'Transaction not found' });
+        const allowed = ['salePrice', 'personalDeal', 'listingCommissionPercent', 'listingCommissionAmount', 'saleCommissionPercent', 'saleCommissionAmount', 'officeGrossCommission', 'adminBrokerageComp', 'otherDeductions', 'holdTrustMoney', 'depositAmount', 'chequeDate', 'logBookDate'];
+        value = { ...(existing.commission || {}), ...Object.fromEntries(Object.entries(value).filter(([key]) => allowed.includes(key))) };
+      }
       const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: { [section]: value } }, { new: true, runValidators: true });
-      if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record);
+      if (!record) return res.status(404).json({ message: 'Transaction not found' }); await writeAudit(req, `${section}.updated`, { transaction: record._id }); res.json(record);
     } catch (error) { res.status(500).json({ message: `Could not save ${section}`, error: error.message }); }
   });
 }
+
+app.put('/api/transactions/:id/checklist', requireAuth, async (req, res) => {
+  try {
+    const checklist = Array.isArray(req.body.checklist) ? req.body.checklist : [];
+    const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('assignedAgent createdBy', 'name email role');
+    if (!record) return res.status(404).json({ message: 'Transaction not found' });
+    const previous = new Map((record.checklist || []).map(item => [String(item.id), item]));
+    const changes = checklist.map(item => ({ documentation: item.documentation, from: previous.get(String(item.id))?.status || 'Not set', to: item.status })).filter(change => change.from !== change.to);
+    record.checklist = checklist; record.markModified('checklist'); await record.save();
+    await writeAudit(req, 'checklist.updated', { transaction: record._id, targetUser: record.assignedAgent?._id || record.createdBy?._id, data: { changes } });
+    if (req.user.role === 'admin' && changes.length) {
+      const agent = record.assignedAgent || record.createdBy;
+      if (agent?.email) {
+        try {
+          const email = checklistChangesEmail({ agentName: agent.name, transaction: record, changes });
+          const sent = await sendEmail({ to: agent.email, ...email });
+          await writeAudit(req, sent.skipped ? 'email.skipped' : 'email.sent', { transaction: record._id, targetUser: agent._id, data: { type: 'checklist-change', reason: sent.reason } });
+        } catch (error) { await writeAudit(req, 'email.failed', { transaction: record._id, targetUser: agent._id, data: { type: 'checklist-change', error: error.message } }); }
+      }
+    }
+    res.json(record);
+  } catch (error) { res.status(500).json({ message: 'Could not save checklist', error: error.message }); }
+});
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
 const driveClient = () => {
@@ -229,27 +339,10 @@ const driveClient = () => {
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
   const oauthRefreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim();
-  if (oauthClientId && oauthClientSecret && oauthRefreshToken && folderId) {
-    const auth = new google.auth.OAuth2(oauthClientId, oauthClientSecret);
-    auth.setCredentials({ refresh_token: oauthRefreshToken });
-    return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'oauth' };
-  }
-  let email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-    try {
-      const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-      email ||= credentials.client_email;
-      privateKey ||= credentials.private_key;
-    } catch { throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON'); }
-  }
-  if (!email || !privateKey || !folderId) throw new Error('Google Drive credentials are incomplete');
-  privateKey = privateKey.replace(/^['"]|['"]$/g, '').replace(/\\n/g, '\n').replace(/\r/g, '').trim();
-  if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----') || !privateKey.includes('-----END PRIVATE KEY-----')) throw new Error('GOOGLE_PRIVATE_KEY must contain the complete private_key from the service-account JSON file');
-  try { createPrivateKey(privateKey); }
-  catch { throw new Error('GOOGLE_PRIVATE_KEY is invalid or truncated. Copy the complete private_key value from the downloaded Google service-account JSON file'); }
-  const auth = new google.auth.JWT({ email, key: privateKey, scopes: ['https://www.googleapis.com/auth/drive'] });
-  return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'service-account' };
+  if (!oauthClientId || !oauthClientSecret || !oauthRefreshToken || !folderId) throw new Error('Google Drive OAuth credentials are incomplete');
+  const auth = new google.auth.OAuth2(oauthClientId, oauthClientSecret);
+  auth.setCredentials({ refresh_token: oauthRefreshToken });
+  return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'oauth' };
 };
 app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Please select a file' });
@@ -356,6 +449,40 @@ app.delete('/api/transactions/:id/checklist/:itemId/document/:fileId', requireAu
   } catch (error) { res.status(500).json({ message: 'Could not remove attachment', error: error.message }); }
 });
 
+app.get(['/api/cron/checklist-reminders', '/api/cron/checklist-reminders/edt', '/api/cron/checklist-reminders/est'], async (req, res) => {
+  if (!process.env.CRON_SECRET || req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).json({ message: 'Invalid cron authorization' });
+  try {
+    const torontoParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+    const torontoDate = `${torontoParts.year}-${torontoParts.month}-${torontoParts.day}`;
+    if (torontoParts.hour !== '00') return res.json({ skipped: true, reason: 'Not midnight in Toronto', torontoDate });
+    const transactions = await Transaction.find({ 'checklist.status': { $in: ['Required', 'Incomplete'] } }).populate('assignedAgent createdBy', 'name email isActive role').lean();
+    const grouped = new Map();
+    for (const transaction of transactions) {
+      const agent = transaction.assignedAgent || transaction.createdBy;
+      if (!agent?.email || !agent.isActive || agent.role === 'admin') continue;
+      const pending = (transaction.checklist || []).filter(item => ['Required', 'Incomplete'].includes(item.status));
+      const group = grouped.get(String(agent._id)) || { agent, items: [] };
+      group.items.push(...pending.map(item => ({ transactionId: transaction._id, address: transaction.address, documentation: item.documentation, status: item.status })));
+      grouped.set(String(agent._id), group);
+    }
+    const results = [];
+    for (const { agent, items } of grouped.values()) {
+      try {
+        const alreadySent = await AuditLog.exists({ action: 'email.sent', targetUser: agent._id, 'details.type': 'daily-checklist-reminder', 'details.localDate': torontoDate });
+        if (alreadySent) { results.push({ agent: agent.email, sent: false, skipped: true, reason: 'Already sent today', count: items.length }); continue; }
+        const email = dailyReminderEmail({ agentName: agent.name, items });
+        const sent = await sendEmail({ to: agent.email, ...email });
+        await AuditLog.create({ action: sent.skipped ? 'email.skipped' : 'email.sent', targetUser: agent._id, details: { type: 'daily-checklist-reminder', localDate: torontoDate, timezone: 'America/Toronto', count: items.length, reason: sent.reason } });
+        results.push({ agent: agent.email, sent: !sent.skipped, count: items.length });
+      } catch (error) {
+        await AuditLog.create({ action: 'email.failed', targetUser: agent._id, details: { type: 'daily-checklist-reminder', error: error.message } });
+        results.push({ agent: agent.email, sent: false, error: error.message });
+      }
+    }
+    res.json({ processedAgents: results.length, results });
+  } catch (error) { res.status(500).json({ message: 'Could not send daily reminders', error: error.message }); }
+});
+
 app.use((error, _req, res, _next) => {
   console.error('API request failed:', error.message);
   if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ message: 'Request body is not valid JSON' });
@@ -367,11 +494,15 @@ let bootstrapPromise;
 const performAdminBootstrap = async () => {
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(); const password = String(process.env.ADMIN_PASSWORD || '');
   await initializeDealNumbers();
+  await User.updateMany({ role: 'user' }, { $set: { role: 'agent' } });
+  const legacyTransactions = await Transaction.find({ assignedAgent: { $exists: false }, createdBy: { $exists: true } }).select('_id createdBy');
+  if (legacyTransactions.length) await Transaction.bulkWrite(legacyTransactions.map(record => ({ updateOne: { filter: { _id: record._id }, update: { $set: { assignedAgent: record.createdBy } } } })));
   if (!email || !password) return null;
   let admin = await User.findOne({ email });
   if (!admin) admin = await User.create({ name: process.env.ADMIN_NAME || 'AMMAX Administrator', email, passwordHash: await bcrypt.hash(password, 12), role: 'admin' });
   else if (admin.role !== 'admin') { admin.role = 'admin'; await admin.save(); }
   await Transaction.updateMany({ createdBy: { $exists: false } }, { $set: { createdBy: admin._id } });
+  await Transaction.updateMany({ assignedAgent: { $exists: false } }, { $set: { assignedAgent: admin._id } });
   return admin;
 };
 export const bootstrapAdmin = async () => {

@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, X } from 'lucide-react';
+import { Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, Users, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
   acceptanceDate: '', dealNumber: '', email: '', seller: '', reviewer: '',
-  type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: ''
+  type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: '', assignedAgent: ''
 };
 const cleanNumberInput = value => String(value ?? '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
 const formatNumberInput = value => {
@@ -75,7 +75,7 @@ function Header({ dark, toggleTheme, user, onLogout }) {
         <img className="logo-image" src="https://ammax.ca/logo.png" alt="AMMAX" />
         <span>AMMAX REALTY INC<span className="gold">.</span></span>
       </Link>
-      <div className="header-actions">{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16} /> : <UserRound size={16} />}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
+      <div className="header-actions">{user?.role === 'admin' && <nav className="admin-nav"><Link to="/admin/users"><Users size={14}/> Agents</Link><Link to="/admin/logs"><Activity size={14}/> Logs</Link></nav>}{user && <div className="user-chip"><span className="user-avatar">{user.role === 'admin' ? <ShieldCheck size={16} /> : <UserRound size={16} />}</span><span><strong>{user.name}</strong><small>{user.role}</small></span></div>}
         <button className="theme-button" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={17} /> : <Moon size={17} />}</button>
         {user && <button className="logout-button" onClick={onLogout}><LogOut size={15} /> Logout</button>}
       </div>
@@ -339,7 +339,7 @@ function ContactsForm({ transaction, onUpdated }) {
 const blankCommission = { salePrice: '', personalDeal: 'no', listingCommissionPercent: '', listingCommissionAmount: '', saleCommissionPercent: '', saleCommissionAmount: '', officeGrossCommission: '', adminBrokerageComp: '', otherDeductions: '', holdTrustMoney: 'no', depositAmount: '', chequeDate: '', logBookDate: '', referralType: '', referralAgent: '', referralBrokerageName: '', referralAmount: '', referralPercent: '', supportingDocument: '', instructions: '' };
 const money = value => value === '' || value === null || value === undefined ? '' : Number(value).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 
-function CommissionForm({ transaction, onUpdated }) {
+function CommissionForm({ transaction, onUpdated, user }) {
   const [form, setForm] = useState(() => {
     const savedCommission = transaction.commission || {};
     const savedSplits = Array.isArray(savedCommission.splits) ? savedCommission.splits : [];
@@ -399,7 +399,7 @@ function CommissionForm({ transaction, onUpdated }) {
       <fieldset className="radio-field trust-radio"><legend>Will Your Brokerage Hold Trust Money?</legend><label><input type="radio" name="holdTrustMoney" value="yes" checked={form.holdTrustMoney === 'yes'} onChange={e => update('holdTrustMoney', e.target.value)} /> Yes</label><label><input type="radio" name="holdTrustMoney" value="no" checked={form.holdTrustMoney === 'no'} onChange={e => update('holdTrustMoney', e.target.value)} /> No</label></fieldset>
       <div className="commission-three">{field('Deposit / Receipt Commission Amount', 'depositAmount')}{field('Date of Cheque', 'chequeDate', 'date')}{field('Date Posted to Log Book', 'logBookDate', 'date')}</div>
     </section>
-    <section className="commission-section"><div className="section-heading"><h2>Referral Details</h2></div>
+    {user.role === 'admin' && <><section className="commission-section"><div className="section-heading"><h2>Referral Details</h2></div>
       <div className="commission-three"><label><span>Referral Type</span><select value={form.referralType} onChange={e => update('referralType', e.target.value)}><option value="">Select</option><option>Incoming</option><option>Outgoing</option><option>Internal</option></select></label>{field('Referral Agent', 'referralAgent', 'text')}{field('Referral Brokerage Name', 'referralBrokerageName', 'text')}</div>
       <div className="commission-three referral-row">{field('Referral Amount', 'referralAmount')} {field('Referral Percentage', 'referralPercent')}<label><span>Supporting Document (PDF only)</span><input className="file-input" type="file" accept="application/pdf" onChange={e => update('supportingDocument', e.target.files[0]?.name || '')} />{form.supportingDocument && <small>{form.supportingDocument}</small>}</label></div>
     </section>
@@ -411,7 +411,7 @@ function CommissionForm({ transaction, onUpdated }) {
         <label><span>Currency Amount</span><input inputMode="decimal" value={formatNumberInput(split.amount)} onChange={e => updateSplit(index, 'amount', cleanNumberInput(e.target.value))} placeholder="0.00" /></label>
         <label><span>Percentage</span><div className="percentage-input"><input type="number" min="0" max="100" step="0.01" value={split.percentage} onChange={e => updateSplit(index, 'percentage', e.target.value)} placeholder="0" /><b>%</b></div></label>
       </div>)}
-    </section>
+    </section></>}
     <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Commission'}</button></div>
   </form>;
 }
@@ -1717,7 +1717,7 @@ function TransactionDetail({ user, onLogout }) {
         <div className="summary-grid">{summaryFields.map(([label, key]) => <div className="detail" key={key}><span>{label}</span><strong className={key === 'email' ? 'email-value' : ''}>{valueFor(key)}</strong></div>)}</div>
         {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} />
           : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} />
-          : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} />
+          : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} user={user} />
           : activeTab === 'Checklist' ? <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />
           : activeTab === 'Receipt' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
           : <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} />}
@@ -1774,10 +1774,15 @@ function TransactionDetail({ user, onLogout }) {
   </>;
 }
 
-function TransactionModal({ onClose, onCreated }) {
+function TransactionModal({ onClose, onCreated, user }) {
   const [form, setForm] = useState(emptyForm);
+  const [agents, setAgents] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (user.role !== 'admin') return;
+    fetch('/api/admin/users').then(readApiResponse).then(items => { const active = items.filter(item => item.isActive); setAgents(active); if (active.length) setForm(current => ({ ...current, assignedAgent: current.assignedAgent || active[0].id })); }).catch(error => setError(error.message));
+  }, [user.role]);
   const change = e => setForm({ ...form, [e.target.name]: e.target.name === 'salePrice' ? cleanNumberInput(e.target.value) : e.target.value });
   const submit = async e => {
     e.preventDefault(); setSaving(true); setError('');
@@ -1795,6 +1800,7 @@ function TransactionModal({ onClose, onCreated }) {
       </div>
       <form onSubmit={submit}>
         <div className="form-grid">
+          {user.role === 'admin' && <label><span>Assign Agent <b>*</b></span><select name="assignedAgent" value={form.assignedAgent} onChange={change} required><option value="">Select agent</option>{agents.map(agent => <option value={agent.id} key={agent.id}>{agent.name} — {agent.email}</option>)}</select></label>}
           {fields.map(([name, label, type, options]) => <label className={type === 'textarea' ? 'wide' : ''} key={name}>
             <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
             {name === 'dealNumber' ? <input value="Assigned automatically" readOnly />
@@ -1822,6 +1828,8 @@ function TransactionsPage({ user, onLogout }) {
   const [loadError, setLoadError] = useState('');
   const [deletingId, setDeletingId] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [agents, setAgents] = useState([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
   useEffect(() => {
     fetch('/api/transactions')
       .then(async response => {
@@ -1832,6 +1840,13 @@ function TransactionsPage({ user, onLogout }) {
       .catch(error => setLoadError(error.message))
       .finally(() => setLoading(false));
   }, []);
+  useEffect(() => {
+    if (user.role !== 'admin') return;
+    fetch('/api/admin/users')
+      .then(readApiResponse)
+      .then(setAgents)
+      .catch(() => setAgents([]));
+  }, [user.role]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
 
   const handleSort = field => {
@@ -1843,7 +1858,12 @@ function TransactionsPage({ user, onLogout }) {
     }
   };
 
-  const filtered = transactions.filter(t => [t.address, t.buyer, t.seller, t.agent, t.dealNumber].some(v => v?.toLowerCase().includes(query.toLowerCase())));
+  const filtered = transactions.filter(t => {
+    const assignedAgentId = typeof t.assignedAgent === 'object' ? (t.assignedAgent?._id || t.assignedAgent?.id) : t.assignedAgent;
+    const matchesAgent = !selectedAgent || String(assignedAgentId || '') === selectedAgent;
+    const matchesQuery = [t.address, t.buyer, t.seller, t.agent, t.dealNumber].some(v => String(v || '').toLowerCase().includes(query.toLowerCase()));
+    return matchesAgent && matchesQuery;
+  });
   const displayedTransactions = sortTransactions(filtered, sortField, sortOrder);
 
   const deleteTransaction = async item => {
@@ -1872,7 +1892,7 @@ function TransactionsPage({ user, onLogout }) {
       const escapeXml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
       const cell = value => `<Cell><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
       const header = `<Row>${columns.map(([label]) => cell(label)).join('')}</Row>`;
-      const rows = transactions.map(item => `<Row>${columns.map(([, accessor]) => cell(typeof accessor === 'function' ? accessor(item) : item[accessor])).join('')}</Row>`).join('');
+      const rows = displayedTransactions.map(item => `<Row>${columns.map(([, accessor]) => cell(typeof accessor === 'function' ? accessor(item) : item[accessor])).join('')}</Row>`).join('');
       const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Transactions"><Table>${header}${rows}</Table></Worksheet></Workbook>`;
       const blob = new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' });
       const filename = `ammax-transactions-${new Date().toISOString().slice(0, 10)}.xls`;
@@ -1892,6 +1912,7 @@ function TransactionsPage({ user, onLogout }) {
       </div>
       <div className="toolbar">
         <div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div>
+        {user.role === 'admin' && <div className="agent-filter"><label htmlFor="agent-filter-select" className="sort-label">Agent:</label><select id="agent-filter-select" className="sort-select" value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)}><option value="">All Agents</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}{agent.isActive ? '' : ' (Inactive)'}</option>)}</select></div>}
         <div className="sort-controls">
           <label htmlFor="sort-field-select" className="sort-label">Sort by:</label>
           <select
@@ -1924,10 +1945,43 @@ function TransactionsPage({ user, onLogout }) {
       {loading ? <div className="empty"><div className="empty-icon"><CalendarDays /></div><h3>Loading transactions…</h3></div>
         : loadError ? <div className="empty"><div className="empty-icon"><X /></div><h3>Transactions could not be loaded</h3><p>{loadError}. Please check the MongoDB connection.</p></div>
           : displayedTransactions.length ? <div className={`transaction-list ${deletingId ? 'is-deleting' : ''}`}>{displayedTransactions.map(t => <TransactionCard key={t._id || t.id} item={t} onDelete={deleteTransaction} showOwner={user.role === 'admin'} sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />)}</div>
-            : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query ? 'Try a different search term.' : 'Create your first transaction to see it listed here.'}</p>{!query && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
+            : <div className="empty"><div className="empty-icon"><Building2 /></div><h3>{query || selectedAgent ? 'No matching transaction found' : 'No transaction found'}</h3><p>{query || selectedAgent ? 'Try a different search term or agent.' : 'Create your first transaction to see it listed here.'}</p>{!query && !selectedAgent && <button className="text-button" onClick={() => setOpen(true)}>Create a transaction →</button>}</div>}
     </main>
-    {open && <TransactionModal onClose={() => setOpen(false)} onCreated={item => setTransactions([item, ...transactions])} />}
+    {open && <TransactionModal user={user} onClose={() => setOpen(false)} onCreated={item => setTransactions([item, ...transactions])} />}
   </>;
+}
+
+function AdminUsersPage({ user, onLogout }) {
+  const [agents, setAgents] = useState([]); const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [message, setMessage] = useState(''); const [loading, setLoading] = useState(true);
+  const load = () => fetch('/api/admin/users').then(readApiResponse).then(setAgents).catch(error => setMessage(error.message)).finally(() => setLoading(false));
+  useEffect(() => { load(); }, []);
+  const createAgent = async event => {
+    event.preventDefault(); setMessage('');
+    try { const response = await fetch('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) }); const result = await readApiResponse(response); if (!response.ok) throw new Error(result.message); setAgents(current => [result, ...current]); setForm({ name: '', email: '', password: '' }); setMessage('Agent account created successfully.'); }
+    catch (error) { setMessage(error.message); }
+  };
+  const toggleStatus = async agent => {
+    const response = await fetch(`/api/admin/users/${agent.id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: !agent.isActive }) });
+    const result = await readApiResponse(response); if (!response.ok) return setMessage(result.message); setAgents(current => current.map(item => item.id === agent.id ? result : item));
+  };
+  const resetPassword = async agent => {
+    const password = window.prompt(`Enter a temporary password for ${agent.name} (minimum 8 characters):`); if (!password) return;
+    const response = await fetch(`/api/admin/users/${agent.id}/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+    const result = await readApiResponse(response); setMessage(response.ok ? 'Password reset successfully.' : result.message);
+  };
+  return <><Header user={user} onLogout={onLogout} dark={false} toggleTheme={() => {}}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Agent Management</h1><p>Create and manage agent access.</p></div><Link className="secondary admin-back" to="/">Back to Transactions</Link></div>
+    <section className="admin-create-card"><h2>Create Agent Account</h2><form onSubmit={createAgent}><input placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required/><input type="email" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required/><input type="password" minLength="8" placeholder="Temporary password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required/><button className="primary">Create Agent</button></form></section>
+    {message && <p className={message.includes('successfully') ? 'success admin-message' : 'error admin-message'}>{message}</p>}
+    <section className="admin-table-card"><div className="admin-table-title"><h2>Agents</h2><span>{agents.length} accounts</span></div>{loading ? <p>Loading agents…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Agent</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>{agents.map(agent => <tr key={agent.id}><td><strong>{agent.name}</strong><small>{agent.email}</small></td><td><span className={`account-status ${agent.isActive ? 'active' : 'inactive'}`}>{agent.isActive ? 'Active' : 'Deactivated'}</span></td><td>{agent.lastLoginAt ? new Date(agent.lastLoginAt).toLocaleString() : 'Never'}</td><td><div className="admin-row-actions"><button className="secondary" onClick={() => resetPassword(agent)}>Reset Password</button><button className={agent.isActive ? 'danger-outline' : 'secondary'} onClick={() => toggleStatus(agent)}>{agent.isActive ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}</tbody></table></div>}</section>
+  </main></>;
+}
+
+function AdminLogsPage({ user, onLogout }) {
+  const [logs, setLogs] = useState([]); const [date, setDate] = useState(''); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
+  const load = () => { setLoading(true); fetch(`/api/admin/logs${date ? `?date=${date}` : ''}`).then(readApiResponse).then(setLogs).catch(error => setError(error.message)).finally(() => setLoading(false)); };
+  useEffect(load, [date]);
+  return <><Header user={user} onLogout={onLogout} dark={false} toggleTheme={() => {}}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Daily Activity Logs</h1><p>Review account, transaction, checklist and email activity.</p></div><div className="log-filters"><input type="date" value={date} onChange={e => setDate(e.target.value)}/><button className="secondary" onClick={() => setDate('')}>All Dates</button></div></div>{error && <p className="error">{error}</p>}<section className="admin-table-card">{loading ? <p>Loading logs…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Date & Time</th><th>Action</th><th>Performed By</th><th>Target</th><th>Transaction</th></tr></thead><tbody>{logs.map(log => <tr key={log._id}><td>{new Date(log.createdAt).toLocaleString()}</td><td><span className="log-action">{log.action.replaceAll('.', ' ')}</span></td><td>{log.actor?.name || 'System'}<small>{log.actor?.email}</small></td><td>{log.targetUser?.name || '—'}<small>{log.targetUser?.email}</small></td><td>{log.transaction ? `${log.transaction.dealNumber || ''} ${log.transaction.address || ''}` : '—'}</td></tr>)}</tbody></table></div>}</section></main></>;
 }
 
 function AuthPage({ mode, onAuthenticated }) {
@@ -1944,7 +1998,23 @@ function AuthPage({ mode, onAuthenticated }) {
       onAuthenticated(result.user); navigate('/');
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>{isSignup ? 'Create your account' : 'Welcome back'}</h1><p>{isSignup ? 'Sign up to manage your own transaction records.' : 'Sign in to continue to your transactions.'}</p><form onSubmit={submit}>{isSignup && <label><span>Full Name</span><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required autoComplete="name" /></label>}<label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required autoComplete={isSignup ? 'new-password' : 'current-password'} /></label>{isSignup && <label><span>Confirm Password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({ ...form, confirmPassword: e.target.value })} required autoComplete="new-password" /></label>}{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : isSignup ? 'Create Account' : 'Sign In'}</button></form><div className="auth-switch">{isSignup ? 'Already have an account?' : 'New to AMMAX Records?'} <Link to={isSignup ? '/login' : '/signup'}>{isSignup ? 'Sign in' : 'Create account'}</Link></div></section></div>;
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>Welcome back</h1><p>Sign in with the account provided by your administrator.</p><form onSubmit={submit}><label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required autoComplete="current-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : 'Sign In'}</button></form></section></div>;
+}
+
+function PasswordChangePage({ user, onChanged, onLogout }) {
+  const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
+  const submit = async event => {
+    event.preventDefault(); setError('');
+    if (form.newPassword !== form.confirmPassword) return setError('New passwords do not match');
+    setSaving(true);
+    try {
+      const response = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const result = await readApiResponse(response); if (!response.ok) throw new Error(result.message);
+      onChanged(result.user);
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Account Security</span><h1>Set a new password</h1><p>Hi {user.name}. Your administrator issued a temporary password. Change it before continuing.</p><form onSubmit={submit}><label><span>Temporary password</span><input type="password" value={form.currentPassword} onChange={e => setForm({ ...form, currentPassword: e.target.value })} required autoComplete="current-password" /></label><label><span>New password</span><input type="password" minLength="8" value={form.newPassword} onChange={e => setForm({ ...form, newPassword: e.target.value })} required autoComplete="new-password" /></label><label><span>Confirm new password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({ ...form, confirmPassword: e.target.value })} required autoComplete="new-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Updating…' : 'Change Password'}</button><button type="button" className="text-button auth-logout" onClick={onLogout}>Sign out</button></form></section></div>;
 }
 
 export default function App() {
@@ -1952,11 +2022,14 @@ export default function App() {
   useEffect(() => { fetch('/api/auth/me').then(response => response.ok ? response.json() : null).then(result => setUser(result?.user || null)).finally(() => setChecking(false)); }, []);
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); setUser(null); };
   if (checking) return <div className="auth-loading"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><p>Loading secure workspace…</p></div>;
+  if (user?.mustChangePassword) return <PasswordChangePage user={user} onChanged={setUser} onLogout={logout} />;
   return <Routes>
     <Route path="/login" element={user ? <Navigate to="/" replace /> : <AuthPage mode="login" onAuthenticated={setUser} />} />
-    <Route path="/signup" element={user ? <Navigate to="/" replace /> : <AuthPage mode="signup" onAuthenticated={setUser} />} />
+    <Route path="/signup" element={<Navigate to="/login" replace />} />
     <Route path="/" element={user ? <TransactionsPage user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
     <Route path="/transactions/:id" element={user ? <TransactionDetail user={user} onLogout={logout} /> : <Navigate to="/login" replace />} />
+    <Route path="/admin/users" element={user?.role === 'admin' ? <AdminUsersPage user={user} onLogout={logout}/> : <Navigate to="/" replace />} />
+    <Route path="/admin/logs" element={user?.role === 'admin' ? <AdminLogsPage user={user} onLogout={logout}/> : <Navigate to="/" replace />} />
     <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
   </Routes>;
 }

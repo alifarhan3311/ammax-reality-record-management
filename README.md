@@ -14,9 +14,7 @@ All transaction create, list, and detail requests persist to and load from Mongo
 
 ## Google Drive checklist uploads
 
-Create a Google Cloud service account, enable Google Drive API, and share the target Drive folder with the service account email as Editor. Add `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, and `GOOGLE_DRIVE_FOLDER_ID` to `server/.env`. Checklist attachments are uploaded to that folder; the Drive file ID and link are saved in MongoDB.
-
-Service accounts cannot own files in a normal Gmail `My Drive` because they have no storage quota. For a normal My Drive folder, configure OAuth user credentials instead: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `GOOGLE_DRIVE_FOLDER_ID`. When all three OAuth values exist, OAuth mode is used automatically. Service-account mode should only be used with a Google Workspace Shared Drive or domain-wide delegation.
+The app uses Google OAuth for checklist uploads to a normal My Drive folder. Configure `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `GOOGLE_DRIVE_FOLDER_ID`. Checklist attachments are uploaded to that folder; the Drive file ID and metadata are saved in MongoDB.
 
 On Vercel, checklist uploads are limited to 4 MB per file because files pass through a serverless function.
 
@@ -27,13 +25,22 @@ On Vercel, checklist uploads are limited to 4 MB per file because files pass thr
 3. Framework preset may remain `Other`; `vercel.json` supplies the build and routing configuration.
 4. Add these Vercel Environment Variables for Production, Preview, and Development:
    - `MONGO_URI`: use a MongoDB Atlas connection string. `127.0.0.1` will not work on Vercel.
-   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-   - `GOOGLE_PRIVATE_KEY` (paste the complete private key, including BEGIN/END lines)
+   - `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `GOOGLE_OAUTH_REFRESH_TOKEN`
    - `GOOGLE_DRIVE_FOLDER_ID`
    - `JWT_SECRET`: a long random value used to sign secure login sessions.
    - `ADMIN_NAME`: the initial administrator's display name.
    - `ADMIN_EMAIL`: the initial administrator's login email.
    - `ADMIN_PASSWORD`: a strong initial administrator password (minimum 8 characters).
+   - `SMTP_HOST`: use `smtp.gmail.com` for Gmail.
+   - `SMTP_PORT`: use `465` with secure SMTP.
+   - `SMTP_SECURE`: use `true` with port 465.
+   - `SMTP_USER`: the Gmail address that sends notifications.
+   - `SMTP_PASS`: the Gmail account's 16-character Google App Password, not its normal password.
+   - `EMAIL_FROM`: display name plus the same Gmail sender address.
+   - `APP_URL`: the production Vercel URL, without a trailing slash.
+   - `CRON_SECRET`: a long random value used to protect the scheduled reminder endpoint.
 5. In MongoDB Atlas Network Access, allow Vercel connectivity. For a simple setup use `0.0.0.0/0` with a strong database user/password; a managed fixed-egress setup is safer for production.
 6. Deploy. Verify `/api/health`, then create and reload a transaction.
 
@@ -43,9 +50,11 @@ If Vercel reports `FUNCTION_INVOCATION_TIMEOUT`, verify that `MONGO_URI` is an A
 
 ## Authentication and access control
 
-- Public signup always creates a normal `user`; it can never create an admin.
-- Users only see and modify transactions whose `createdBy` matches their account.
-- Admins can see and manage every user's transactions, including owner name/email in the list.
-- Ownership is enforced by the API for list, detail, update, delete, contacts, commission, checklist, and Drive uploads.
-- On startup, the account matching `ADMIN_EMAIL` is created/promoted to admin. Existing transactions without an owner are assigned to this initial admin.
-- Authentication uses a seven-day JWT stored in an HTTP-only cookie. Never commit `JWT_SECRET` or admin credentials to GitHub.
+- Public signup is disabled. Administrators create, deactivate, reactivate, and reset passwords for agent accounts.
+- A newly created or reset agent account must replace its temporary password at the next login.
+- Agents only see and modify their assigned transactions. Admins can review every transaction and change checklist statuses.
+- The API enforces ownership for list, detail, update, contacts, commission, checklist, export, and Drive operations.
+- The agent commission view stops before Referral Details; those fields remain admin-only on both the client and API.
+- Admin checklist status changes generate an immediate agent email. Two daily Vercel slots cover `04:00` and `05:00 UTC`; the server sends each agent's Required/Incomplete reminder only when that slot is midnight Toronto time (`America/Toronto`). This supports daylight-saving changes and Vercel Hobby's daily-only cron limit.
+- On startup, the account matching `ADMIN_EMAIL` is created/promoted to admin. Legacy users become agents and legacy transactions are assigned to their original creator.
+- Authentication uses a seven-day JWT stored in an HTTP-only cookie. Never commit `JWT_SECRET`, `CRON_SECRET`, email credentials, or admin credentials to GitHub.
