@@ -339,7 +339,7 @@ app.put('/api/transactions/:id/checklist', requireAuth, async (req, res) => {
     const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('assignedAgent createdBy', 'name email role');
     if (!record) return res.status(404).json({ message: 'Transaction not found' });
     const previous = new Map((record.checklist || []).map(item => [String(item.id), item]));
-    const changes = checklist.map(item => ({ documentation: item.documentation, from: previous.get(String(item.id))?.status || 'Not set', to: item.status })).filter(change => change.from !== change.to);
+    const changes = checklist.map(item => ({ documentation: item.documentation, from: previous.get(String(item.id))?.status || 'Not set', to: item.status, comments: String(item.comments || '').trim() })).filter(change => change.from !== change.to);
     record.checklist = checklist; record.markModified('checklist'); await record.save();
     await writeAudit(req, 'checklist.updated', { transaction: record._id, targetUser: record.assignedAgent?._id || record.createdBy?._id, data: { changes } });
     if (req.user.role === 'admin' && changes.length) {
@@ -485,7 +485,7 @@ app.get(['/api/cron/checklist-reminders', '/api/cron/checklist-reminders/edt', '
       if (!agent?.email || !agent.isActive || agent.role === 'admin') continue;
       const pending = (transaction.checklist || []).filter(item => ['Required', 'Incomplete'].includes(item.status));
       const group = grouped.get(String(agent._id)) || { agent, items: [] };
-      group.items.push(...pending.map(item => ({ transactionId: transaction._id, address: transaction.address, documentation: item.documentation, status: item.status })));
+      group.items.push(...pending.map(item => ({ transactionId: transaction._id, address: transaction.address, documentation: item.documentation, status: item.status, comments: String(item.comments || '').trim() })));
       grouped.set(String(agent._id), group);
     }
     const results = [];

@@ -23,16 +23,16 @@ export async function sendEmail({ to, subject, html }) {
 }
 
 export const checklistChangesEmail = ({ agentName, transaction, changes }) => {
-  const appUrl = (process.env.APP_URL || 'http://localhost:5050').replace(/\/$/, '');
-  const rows = changes.map(change => `<tr><td style="padding:8px;border:1px solid #ddd">${escapeHtml(change.documentation)}</td><td style="padding:8px;border:1px solid #ddd">${escapeHtml(change.from)}</td><td style="padding:8px;border:1px solid #ddd"><strong>${escapeHtml(change.to)}</strong></td></tr>`).join('');
+  const appUrl = (process.env.APP_URL || 'https://ammax-reality-record-management.vercel.app').replace(/\/$/, '');
+  const rows = changes.map(change => `<tr><td style="padding:8px;border:1px solid #ddd">${escapeHtml(change.documentation)}</td><td style="padding:8px;border:1px solid #ddd">${escapeHtml(change.from)}</td><td style="padding:8px;border:1px solid #ddd"><strong>${escapeHtml(change.to)}</strong></td><td style="padding:8px;border:1px solid #ddd;white-space:pre-wrap">${escapeHtml(change.comments || '—')}</td></tr>`).join('');
   return {
     subject: `Checklist updated — Deal ${transaction.dealNumber || ''}`,
-    html: `<p>Hello ${escapeHtml(agentName)},</p><p>An administrator updated checklist statuses for <strong>${escapeHtml(transaction.address)}</strong>.</p><table style="border-collapse:collapse"><tr><th style="padding:8px;border:1px solid #ddd">Document</th><th style="padding:8px;border:1px solid #ddd">Previous</th><th style="padding:8px;border:1px solid #ddd">New</th></tr>${rows}</table><p><a href="${appUrl}/transactions/${transaction._id}">Open transaction</a></p>`
+    html: `<p>Hello ${escapeHtml(agentName)},</p><p>An administrator updated checklist statuses for <strong>${escapeHtml(transaction.address)}</strong>.</p><table style="border-collapse:collapse"><tr><th style="padding:8px;border:1px solid #ddd">Document</th><th style="padding:8px;border:1px solid #ddd">Previous</th><th style="padding:8px;border:1px solid #ddd">New</th><th style="padding:8px;border:1px solid #ddd">Comments</th></tr>${rows}</table><p><a href="${appUrl}/transactions/${transaction._id}">Open transaction</a></p>`
   };
 };
 
 export const dailyReminderEmail = ({ agentName, items }) => {
-  const appUrl = (process.env.APP_URL || 'http://localhost:5050').replace(/\/$/, '');
-  const rows = items.map(item => `<tr><td style="padding:8px;border:1px solid #ddd">${escapeHtml(item.address)}</td><td style="padding:8px;border:1px solid #ddd">${escapeHtml(item.documentation)}</td><td style="padding:8px;border:1px solid #ddd"><strong>${escapeHtml(item.status)}</strong></td><td style="padding:8px;border:1px solid #ddd"><a href="${appUrl}/transactions/${item.transactionId}">Open</a></td></tr>`).join('');
-  return { subject: 'AMMAX daily checklist reminders', html: `<p>Hello ${escapeHtml(agentName)},</p><p>The following checklist items still require attention:</p><table style="border-collapse:collapse"><tr><th style="padding:8px;border:1px solid #ddd">Transaction</th><th style="padding:8px;border:1px solid #ddd">Document</th><th style="padding:8px;border:1px solid #ddd">Status</th><th style="padding:8px;border:1px solid #ddd">Link</th></tr>${rows}</table>` };
+  const appUrl = (process.env.APP_URL || 'https://ammax-reality-record-management.vercel.app').replace(/\/$/, '');
+  const rows = items.map(item => `<tr><td style="padding:8px;border:1px solid #ddd">${escapeHtml(item.address)}</td><td style="padding:8px;border:1px solid #ddd">${escapeHtml(item.documentation)}</td><td style="padding:8px;border:1px solid #ddd"><strong>${escapeHtml(item.status)}</strong></td><td style="padding:8px;border:1px solid #ddd;white-space:pre-wrap">${escapeHtml(item.comments || '—')}</td><td style="padding:8px;border:1px solid #ddd"><a href="${appUrl}/transactions/${item.transactionId}">Open</a></td></tr>`).join('');
+  return { subject: 'AMMAX daily checklist reminders', html: `<p>Hello ${escapeHtml(agentName)},</p><p>The following checklist items still require attention:</p><table style="border-collapse:collapse"><tr><th style="padding:8px;border:1px solid #ddd">Transaction</th><th style="padding:8px;border:1px solid #ddd">Document</th><th style="padding:8px;border:1px solid #ddd">Status</th><th style="padding:8px;border:1px solid #ddd">Comments</th><th style="padding:8px;border:1px solid #ddd">Link</th></tr>${rows}</table>` };
 };
