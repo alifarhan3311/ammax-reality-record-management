@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, Users, X } from 'lucide-react';
+import { Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, EyeOff, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, Users, X } from 'lucide-react';
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
@@ -66,6 +66,11 @@ async function readApiResponse(response) {
   const text = await response.text();
   if (text.startsWith('An error occurred') || text.includes('FUNCTION_INVOCATION')) throw new Error('Server temporarily unavailable. Check Vercel Function logs and environment variables.');
   throw new Error(text?.slice(0, 180) || `Server returned HTTP ${response.status}`);
+}
+
+function PasswordInput(props) {
+  const [visible, setVisible] = useState(false);
+  return <div className="password-input-wrap"><input {...props} type={visible ? 'text' : 'password'} /><button type="button" className="password-toggle" onClick={() => setVisible(current => !current)} aria-label={visible ? 'Hide password' : 'Show password'} title={visible ? 'Hide password' : 'Show password'}>{visible ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>;
 }
 
 function Header({ dark, toggleTheme, user, onLogout }) {
@@ -1954,6 +1959,7 @@ function TransactionsPage({ user, onLogout }) {
 function AdminUsersPage({ user, onLogout }) {
   const [agents, setAgents] = useState([]); const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [message, setMessage] = useState(''); const [loading, setLoading] = useState(true);
+  const [editingAgent, setEditingAgent] = useState(null); const [editForm, setEditForm] = useState({ name: '', email: '' }); const [savingEdit, setSavingEdit] = useState(false);
   const load = () => fetch('/api/admin/users').then(readApiResponse).then(setAgents).catch(error => setMessage(error.message)).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
   const createAgent = async event => {
@@ -1970,11 +1976,30 @@ function AdminUsersPage({ user, onLogout }) {
     const response = await fetch(`/api/admin/users/${agent.id}/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
     const result = await readApiResponse(response); setMessage(response.ok ? 'Password reset successfully.' : result.message);
   };
+  const openEdit = agent => { setEditingAgent(agent); setEditForm({ name: agent.name, email: agent.email }); setMessage(''); };
+  const saveEdit = async event => {
+    event.preventDefault(); setSavingEdit(true);
+    try {
+      const response = await fetch(`/api/admin/users/${editingAgent.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editForm) });
+      const result = await readApiResponse(response); if (!response.ok) throw new Error(result.message);
+      setAgents(current => current.map(agent => agent.id === result.id ? result : agent)); setEditingAgent(null); setMessage('Agent details updated successfully.');
+    } catch (error) { setMessage(error.message); } finally { setSavingEdit(false); }
+  };
+  const deleteAgent = async agent => {
+    if (!window.confirm(`Permanently delete agent "${agent.name}"?\n\nTheir transaction records will remain available to administrators.`)) return;
+    try {
+      const response = await fetch(`/api/admin/users/${agent.id}`, { method: 'DELETE' });
+      const result = await readApiResponse(response); if (!response.ok) throw new Error(result.message);
+      setAgents(current => current.filter(item => item.id !== agent.id));
+      setMessage(`Agent deleted successfully. ${result.retainedTransactions || 0} transaction records were retained.`);
+    } catch (error) { setMessage(error.message); }
+  };
   return <><Header user={user} onLogout={onLogout} dark={false} toggleTheme={() => {}}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Agent Management</h1><p>Create and manage agent access.</p></div><Link className="secondary admin-back" to="/">Back to Transactions</Link></div>
-    <section className="admin-create-card"><h2>Create Agent Account</h2><form onSubmit={createAgent}><input placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required/><input type="email" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required/><input type="password" minLength="8" placeholder="Temporary password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required/><button className="primary">Create Agent</button></form></section>
+    <section className="admin-create-card"><h2>Create Agent Account</h2><form onSubmit={createAgent}><input placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required/><input type="email" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required/><PasswordInput minLength="8" placeholder="Temporary password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required/><button className="primary">Create Agent</button></form></section>
     {message && <p className={message.includes('successfully') ? 'success admin-message' : 'error admin-message'}>{message}</p>}
-    <section className="admin-table-card"><div className="admin-table-title"><h2>Agents</h2><span>{agents.length} accounts</span></div>{loading ? <p>Loading agents…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Agent</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>{agents.map(agent => <tr key={agent.id}><td><strong>{agent.name}</strong><small>{agent.email}</small></td><td><span className={`account-status ${agent.isActive ? 'active' : 'inactive'}`}>{agent.isActive ? 'Active' : 'Deactivated'}</span></td><td>{agent.lastLoginAt ? new Date(agent.lastLoginAt).toLocaleString() : 'Never'}</td><td><div className="admin-row-actions"><button className="secondary" onClick={() => resetPassword(agent)}>Reset Password</button><button className={agent.isActive ? 'danger-outline' : 'secondary'} onClick={() => toggleStatus(agent)}>{agent.isActive ? 'Deactivate' : 'Activate'}</button></div></td></tr>)}</tbody></table></div>}</section>
-  </main></>;
+    <section className="admin-table-card"><div className="admin-table-title"><h2>Agents</h2><span>{agents.length} accounts</span></div>{loading ? <p>Loading agents…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Agent</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>{agents.map(agent => <tr key={agent.id}><td><strong>{agent.name}</strong><small>{agent.email}</small></td><td><span className={`account-status ${agent.isActive ? 'active' : 'inactive'}`}>{agent.isActive ? 'Active' : 'Deactivated'}</span></td><td>{agent.lastLoginAt ? new Date(agent.lastLoginAt).toLocaleString() : 'Never'}</td><td><div className="admin-row-actions"><button className="secondary" onClick={() => openEdit(agent)}><Pencil size={13}/> Edit</button><button className="secondary" onClick={() => resetPassword(agent)}>Reset Password</button><button className={agent.isActive ? 'danger-outline' : 'secondary'} onClick={() => toggleStatus(agent)}>{agent.isActive ? 'Deactivate' : 'Activate'}</button><button className="danger-outline" onClick={() => deleteAgent(agent)}><Trash2 size={13}/> Delete</button></div></td></tr>)}</tbody></table></div>}</section>
+  </main>{editingAgent && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setEditingAgent(null)}><section className="agent-edit-modal"><div className="modal-head"><div><span className="eyebrow">Agent Account</span><h2>Edit Agent</h2></div><button className="icon-button" type="button" onClick={() => setEditingAgent(null)}><X size={18}/></button></div><form onSubmit={saveEdit}><label><span>Full name</span><input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} required/></label><label><span>Email address</span><input type="email" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} required/></label><div className="form-actions"><button type="button" className="secondary" onClick={() => setEditingAgent(null)}>Cancel</button><button className="primary" disabled={savingEdit}>{savingEdit ? 'Saving…' : 'Save Changes'}</button></div></form></section></div>}
+  </>;
 }
 
 function AdminLogsPage({ user, onLogout }) {
@@ -1998,7 +2023,7 @@ function AuthPage({ mode, onAuthenticated }) {
       onAuthenticated(result.user); navigate('/');
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>Welcome back</h1><p>Sign in with the account provided by your administrator.</p><form onSubmit={submit}><label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></label><label><span>Password</span><input type="password" minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required autoComplete="current-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : 'Sign In'}</button></form></section></div>;
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Records Management</span><h1>Welcome back</h1><p>Sign in with the account provided by your administrator.</p><form onSubmit={submit}><label><span>Email Address</span><input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></label><label><span>Password</span><PasswordInput minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required autoComplete="current-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Please wait…' : 'Sign In'}</button></form></section></div>;
 }
 
 function PasswordChangePage({ user, onChanged, onLogout }) {
@@ -2014,7 +2039,7 @@ function PasswordChangePage({ user, onChanged, onLogout }) {
       onChanged(result.user);
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Account Security</span><h1>Set a new password</h1><p>Hi {user.name}. Your administrator issued a temporary password. Change it before continuing.</p><form onSubmit={submit}><label><span>Temporary password</span><input type="password" value={form.currentPassword} onChange={e => setForm({ ...form, currentPassword: e.target.value })} required autoComplete="current-password" /></label><label><span>New password</span><input type="password" minLength="8" value={form.newPassword} onChange={e => setForm({ ...form, newPassword: e.target.value })} required autoComplete="new-password" /></label><label><span>Confirm new password</span><input type="password" minLength="8" value={form.confirmPassword} onChange={e => setForm({ ...form, confirmPassword: e.target.value })} required autoComplete="new-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Updating…' : 'Change Password'}</button><button type="button" className="text-button auth-logout" onClick={onLogout}>Sign out</button></form></section></div>;
+  return <div className="auth-page"><div className="auth-brand"><img src="https://ammax.ca/logo.png" alt="AMMAX" /><span>AMMAX REALTY INC<span className="gold">.</span></span></div><section className="auth-card"><span className="eyebrow">Account Security</span><h1>Set a new password</h1><p>Hi {user.name}. Your administrator issued a temporary password. Change it before continuing.</p><form onSubmit={submit}><label><span>Temporary password</span><PasswordInput value={form.currentPassword} onChange={e => setForm({ ...form, currentPassword: e.target.value })} required autoComplete="current-password" /></label><label><span>New password</span><PasswordInput minLength="8" value={form.newPassword} onChange={e => setForm({ ...form, newPassword: e.target.value })} required autoComplete="new-password" /></label><label><span>Confirm new password</span><PasswordInput minLength="8" value={form.confirmPassword} onChange={e => setForm({ ...form, confirmPassword: e.target.value })} required autoComplete="new-password" /></label>{error && <p className="error">{error}</p>}<button className="primary auth-submit" disabled={saving}>{saving ? 'Updating…' : 'Change Password'}</button><button type="button" className="text-button auth-logout" onClick={onLogout}>Sign out</button></form></section></div>;
 }
 
 export default function App() {

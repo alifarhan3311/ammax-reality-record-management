@@ -162,6 +162,29 @@ app.patch('/api/admin/users/:id/status', requireAuth, requireAdmin, async (req, 
     await writeAudit(req, agent.isActive ? 'agent.activated' : 'agent.deactivated', { targetUser: agent._id }); res.json(publicUser(agent));
   } catch (error) { res.status(500).json({ message: 'Could not update account', error: error.message }); }
 });
+app.patch('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (name.length < 2 || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Valid agent name and email are required' });
+    if (await User.exists({ email, _id: { $ne: req.params.id } })) return res.status(409).json({ message: 'This email is already used by another account' });
+    const agent = await User.findOneAndUpdate({ _id: req.params.id, role: { $ne: 'admin' } }, { $set: { name, email } }, { new: true, runValidators: true });
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    await writeAudit(req, 'agent.updated', { targetUser: agent._id, data: { name, email } });
+    res.json(publicUser(agent));
+  } catch (error) { res.status(500).json({ message: 'Could not update agent', error: error.message }); }
+});
+app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const agent = await User.findOne({ _id: req.params.id, role: { $ne: 'admin' } });
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    const assignedTransactions = await Transaction.countDocuments({ assignedAgent: agent._id });
+    await Transaction.updateMany({ assignedAgent: agent._id }, { $unset: { assignedAgent: 1 } });
+    await writeAudit(req, 'agent.deleted', { targetUser: agent._id, data: { name: agent.name, email: agent.email, retainedTransactions: assignedTransactions } });
+    await agent.deleteOne();
+    res.json({ message: 'Agent deleted successfully', retainedTransactions: assignedTransactions });
+  } catch (error) { res.status(500).json({ message: 'Could not delete agent', error: error.message }); }
+});
 app.post('/api/admin/users/:id/reset-password', requireAuth, requireAdmin, async (req, res) => {
   try {
     const password = String(req.body.password || '');
