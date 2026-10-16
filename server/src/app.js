@@ -11,7 +11,7 @@ import Transaction from './models/Transaction.js';
 import User from './models/User.js';
 import Counter from './models/Counter.js';
 import AuditLog from './models/AuditLog.js';
-import { checklistChangesEmail, dailyReminderEmail, sendEmail } from './services/email.js';
+import { checklistChangesEmail, dailyReminderEmail, newTransactionAdminEmail, sendEmail } from './services/email.js';
 import dns from 'node:dns';
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
@@ -208,7 +208,9 @@ app.get('/api/admin/logs', requireAuth, requireAdmin, async (req, res) => {
 app.get('/api/transactions', requireAuth, async (req, res) => {
   try {
     const filter = req.user.role === 'admin' ? {} : agentOwnership(req.user._id);
-    res.json(await Transaction.find(filter).populate('createdBy assignedAgent', 'name email role').sort({ createdAt: -1 }).lean());
+    let query = Transaction.find(filter);
+    if (req.user.role !== 'admin') query = query.select('-receipts -invoices');
+    res.json(await query.populate('createdBy assignedAgent', 'name email role').sort({ createdAt: -1 }).lean());
   } catch (error) { res.status(500).json({ message: 'Could not load transactions', error: error.message }); }
 });
 app.get('/api/transactions-export/excel', requireAuth, async (req, res) => {
@@ -265,7 +267,7 @@ app.get('/api/contacts/search', requireAuth, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not search contacts', error: error.message }); }
 });
 app.get('/api/transactions/:id', requireAuth, async (req, res) => {
-  try { const record = await Transaction.findOne(ownerFilter(req, req.params.id)).populate('createdBy assignedAgent', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
+  try { let query = Transaction.findOne(ownerFilter(req, req.params.id)); if (req.user.role !== 'admin') query = query.select('-receipts -invoices'); const record = await query.populate('createdBy assignedAgent', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not load transaction' }); }
 });
 app.post('/api/transactions', requireAuth, async (req, res) => {
@@ -281,6 +283,18 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
     }
     const record = await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(), createdBy: req.user._id, assignedAgent });
     await writeAudit(req, 'transaction.created', { transaction: record._id, targetUser: assignedAgent, data: { address: record.address, dealNumber: record.dealNumber } });
+    if (req.user.role !== 'admin') {
+      const admins = await User.find({ role: 'admin', isActive: true }).select('name email');
+      const notification = newTransactionAdminEmail({ agentName: req.user.name, transaction: record });
+      for (const admin of admins) {
+        try {
+          const sent = await sendEmail({ to: admin.email, ...notification });
+          await writeAudit(req, sent.skipped ? 'email.skipped' : 'email.sent', { transaction: record._id, targetUser: admin._id, data: { type: 'new-transaction-admin-notification', agent: req.user.name, reason: sent.reason } });
+        } catch (error) {
+          await writeAudit(req, 'email.failed', { transaction: record._id, targetUser: admin._id, data: { type: 'new-transaction-admin-notification', error: error.message } });
+        }
+      }
+    }
     res.status(201).json(record);
   }
   catch (error) { res.status(500).json({ message: 'Could not create transaction', error: error.message }); }
@@ -319,6 +333,7 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
 for (const section of ['contacts', 'commission', 'receipts', 'invoices']) {
   app.put(`/api/transactions/:id/${section}`, requireAuth, async (req, res) => {
     try {
+      if (['receipts', 'invoices'].includes(section) && req.user.role !== 'admin') return res.status(403).json({ message: 'Only administrators can manage receipts and invoices' });
       const isArraySection = ['receipts', 'invoices'].includes(section);
       let value = isArraySection ? (Array.isArray(req.body[section]) ? req.body[section] : []) : (req.body[section] || {});
       if (section === 'commission' && req.user.role !== 'admin') {

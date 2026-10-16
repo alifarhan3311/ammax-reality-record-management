@@ -1696,6 +1696,7 @@ function TransactionDetail({ user, onLogout }) {
   if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
   if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
   const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : (key === 'coBuyerAgent' ? (transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '')) : transaction[key]) || '—';
+  const visibleTabs = user.role === 'admin' ? ['Transaction', 'Contacts', 'Commission', 'Checklist', 'Receipt', 'Invoice'] : ['Transaction', 'Contacts', 'Commission', 'Checklist'];
 
   return <>
     <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
@@ -1707,7 +1708,7 @@ function TransactionDetail({ user, onLogout }) {
       </div>
       <section className="record-panel">
         <div className="tabs" role="tablist">
-          {['Transaction', 'Contacts', 'Commission', 'Checklist', 'Receipt', 'Invoice'].map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               role="tab"
@@ -1724,8 +1725,8 @@ function TransactionDetail({ user, onLogout }) {
           : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} />
           : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} user={user} />
           : activeTab === 'Checklist' ? <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />
-          : activeTab === 'Receipt' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
-          : <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} />}
+          : activeTab === 'Receipt' && user.role === 'admin' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
+          : activeTab === 'Invoice' && user.role === 'admin' ? <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} /> : null}
       </section>
     </main>
 
