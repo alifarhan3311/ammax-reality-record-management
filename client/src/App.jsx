@@ -1783,12 +1783,19 @@ function TransactionDetail({ user, onLogout }) {
 function TransactionModal({ onClose, onCreated, user }) {
   const [form, setForm] = useState(emptyForm);
   const [agents, setAgents] = useState([]);
+  const [dealPreview, setDealPreview] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     if (user.role !== 'admin') return;
     fetch('/api/admin/users').then(readApiResponse).then(items => { const active = items.filter(item => item.isActive); setAgents(active); if (active.length) setForm(current => ({ ...current, assignedAgent: current.assignedAgent || active[0].id })); }).catch(error => setError(error.message));
   }, [user.role]);
+  useEffect(() => {
+    fetch('/api/transactions/next-deal-number')
+      .then(readApiResponse)
+      .then(result => setDealPreview(result.dealNumber || ''))
+      .catch(() => setDealPreview(''));
+  }, []);
   const change = e => setForm({ ...form, [e.target.name]: e.target.name === 'salePrice' ? cleanNumberInput(e.target.value) : e.target.value });
   const submit = async e => {
     e.preventDefault(); setSaving(true); setError('');
@@ -1809,7 +1816,7 @@ function TransactionModal({ onClose, onCreated, user }) {
           {user.role === 'admin' && <label><span>Assign Agent <b>*</b></span><select name="assignedAgent" value={form.assignedAgent} onChange={change} required><option value="">Select agent</option>{agents.map(agent => <option value={agent.id} key={agent.id}>{agent.name} — {agent.email}</option>)}</select></label>}
           {fields.map(([name, label, type, options]) => <label className={type === 'textarea' ? 'wide' : ''} key={name}>
             <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
-            {name === 'dealNumber' ? <input value="Assigned automatically" readOnly />
+            {name === 'dealNumber' ? <input value={dealPreview || 'Assigned automatically'} readOnly />
               : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
                 : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
                   : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>

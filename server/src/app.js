@@ -70,28 +70,29 @@ const writeAudit = async (req, action, details = {}) => {
   try { await AuditLog.create({ actor: req.user?._id, action, targetUser: details.targetUser, transaction: details.transaction, details: details.data || {}, ipAddress: req.ip }); }
   catch (error) { console.error('Audit log failed:', error.message); }
 };
-const dealCounterId = 'transaction-deal-number';
-const initializeDealNumbers = async () => {
-  const existingCounter = await Counter.findById(dealCounterId);
+const dealInitials = name => {
+  const words = String(name || '').trim().match(/[\p{L}\p{N}]+/gu) || [];
+  if (!words.length) return 'TX';
+  return `${words[0][0]}${words.length > 1 ? words.at(-1)[0] : ''}`.toUpperCase();
+};
+const creatorDealCounterId = userId => `transaction-deal-number:${userId}`;
+const initializeCreatorDealCounter = async user => {
+  const counterId = creatorDealCounterId(user._id);
+  const existingCounter = await Counter.findById(counterId);
   if (existingCounter) return existingCounter;
+  const historicTransactionCount = await Transaction.countDocuments({ createdBy: user._id });
   try {
-    await Counter.create({ _id: dealCounterId, seq: 0 });
-    const transactions = await Transaction.find({}).sort({ createdAt: 1, _id: 1 }).select('_id');
-    if (transactions.length) {
-      await Transaction.bulkWrite(transactions.map((transaction, index) => ({
-        updateOne: { filter: { _id: transaction._id }, update: { $set: { dealNumber: String(index + 1) } } }
-      })));
-    }
-    return Counter.findByIdAndUpdate(dealCounterId, { $set: { seq: transactions.length } }, { new: true });
+    return await Counter.create({ _id: counterId, seq: historicTransactionCount });
   } catch (error) {
-    if (error.code === 11000) return Counter.findById(dealCounterId);
+    if (error.code === 11000) return Counter.findById(counterId);
     throw error;
   }
 };
-const nextDealNumber = async () => {
-  await initializeDealNumbers();
-  const counter = await Counter.findByIdAndUpdate(dealCounterId, { $inc: { seq: 1 } }, { new: true });
-  return String(counter.seq);
+const nextDealNumber = async user => {
+  const counterId = creatorDealCounterId(user._id);
+  await initializeCreatorDealCounter(user);
+  const counter = await Counter.findByIdAndUpdate(counterId, { $inc: { seq: 1 } }, { new: true });
+  return `${dealInitials(user.name)}-${counter.seq}`;
 };
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.name, authConfigured: Boolean(process.env.JWT_SECRET) }));
@@ -266,6 +267,13 @@ app.get('/api/contacts/search', requireAuth, async (req, res) => {
     res.json(results);
   } catch (error) { res.status(500).json({ message: 'Could not search contacts', error: error.message }); }
 });
+app.get('/api/transactions/next-deal-number', requireAuth, async (req, res) => {
+  try {
+    const counter = await Counter.findById(creatorDealCounterId(req.user._id)).lean();
+    const currentSequence = counter?.seq ?? await Transaction.countDocuments({ createdBy: req.user._id });
+    res.json({ dealNumber: `${dealInitials(req.user.name)}-${currentSequence + 1}` });
+  } catch (error) { res.status(500).json({ message: 'Could not preview deal number' }); }
+});
 app.get('/api/transactions/:id', requireAuth, async (req, res) => {
   try { let query = Transaction.findOne(ownerFilter(req, req.params.id)); if (req.user.role !== 'admin') query = query.select('-receipts -invoices'); const record = await query.populate('createdBy assignedAgent', 'name email role').lean(); if (!record) return res.status(404).json({ message: 'Transaction not found' }); res.json(record); }
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not load transaction' }); }
@@ -281,7 +289,7 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
       if (!agent) return res.status(400).json({ message: 'Please select an active agent' });
       assignedAgent = agent._id;
     }
-    const record = await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(), createdBy: req.user._id, assignedAgent });
+    const record = await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(req.user), createdBy: req.user._id, assignedAgent });
     await writeAudit(req, 'transaction.created', { transaction: record._id, targetUser: assignedAgent, data: { address: record.address, dealNumber: record.dealNumber } });
     if (req.user.role !== 'admin') {
       const admins = await User.find({ role: 'admin', isActive: true }).select('name email');
@@ -531,7 +539,6 @@ app.use((error, _req, res, _next) => {
 let bootstrapPromise;
 const performAdminBootstrap = async () => {
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(); const password = String(process.env.ADMIN_PASSWORD || '');
-  await initializeDealNumbers();
   await User.updateMany({ role: 'user' }, { $set: { role: 'agent' } });
   const legacyTransactions = await Transaction.find({ assignedAgent: { $exists: false }, createdBy: { $exists: true } }).select('_id createdBy');
   if (legacyTransactions.length) await Transaction.bulkWrite(legacyTransactions.map(record => ({ updateOne: { filter: { _id: record._id }, update: { $set: { assignedAgent: record.createdBy } } } })));
