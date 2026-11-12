@@ -3,7 +3,8 @@ import mongoose from 'mongoose';
 const transactionSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
-  address: { type: String, required: true, trim: true }, agent: { type: String, required: true, trim: true },
+  address: { type: String, required: true, trim: true }, agent: { type: String, trim: true },
+  buyerAgent: { type: String, trim: true }, sellerAgent: { type: String, trim: true },
   closeOfDeal: String, salePrice: Number, buyer: { type: String, required: true, trim: true },
   acceptanceDate: String, dealNumber: String, email: { type: String, required: true, trim: true, lowercase: true },
   seller: String, sellerFirstName: String, sellerLastName: String, reviewer: { type: String, default: 'Unassigned' },

@@ -296,8 +296,10 @@ app.get('/api/transactions/:id', requireAuth, async (req, res) => {
   catch (error) { const status = error.name === 'CastError' ? 404 : 500; res.status(status).json({ message: status === 404 ? 'Transaction not found' : 'Could not load transaction' }); }
 });
 app.post('/api/transactions', requireAuth, async (req, res) => {
-  const { address, agent, buyer, email } = req.body;
-  if (![address, agent, buyer, email].every(value => typeof value === 'string' && value.trim())) return res.status(400).json({ message: 'Address, agent, buyer and email are required' });
+  const { address, buyer, email } = req.body;
+  const buyerAgent = req.body.buyerAgent || req.body.agent;
+  const sellerAgent = req.body.sellerAgent || '';
+  if (![address, buyerAgent, buyer, email].every(value => typeof value === 'string' && value.trim())) return res.status(400).json({ message: 'Address, buyer agent, buyer and email are required' });
   try {
     let assignedAgent = req.user._id;
     if (req.user.role === 'admin' && !req.body.assignedAgent) return res.status(400).json({ message: 'Please select an agent for this transaction' });
@@ -331,6 +333,9 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
     }
     const record = await Transaction.create({
       ...req.body,
+      agent: buyerAgent,
+      buyerAgent,
+      sellerAgent,
       sellerFirstName: req.body.sellerFirstName || sellerFirstName,
       sellerLastName: req.body.sellerLastName || sellerLastName,
       contacts,
@@ -357,8 +362,13 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'sellerFirstName', 'sellerLastName', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate', 'status'];
+    const allowed = ['address', 'agent', 'buyerAgent', 'sellerAgent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'sellerFirstName', 'sellerLastName', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate', 'status'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+    if (updates.buyerAgent !== undefined && updates.agent === undefined) {
+      updates.agent = updates.buyerAgent;
+    } else if (updates.agent !== undefined && updates.buyerAgent === undefined) {
+      updates.buyerAgent = updates.agent;
+    }
     if (updates.seller !== undefined && (updates.sellerFirstName === undefined || updates.sellerLastName === undefined)) {
       const { firstName, lastName } = splitSellerName(updates.seller);
       updates.sellerFirstName = firstName;

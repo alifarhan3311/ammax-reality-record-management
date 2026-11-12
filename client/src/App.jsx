@@ -16,7 +16,7 @@ const splitSellerName = sellerName => {
 };
 
 const emptyForm = {
-  address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
+  address: '', agent: '', buyerAgent: '', sellerAgent: '', closeOfDeal: '', salePrice: '', buyer: '',
   acceptanceDate: '', dealNumber: '', email: '', seller: '', sellerFirstName: '', sellerLastName: '', reviewer: '',
   type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: '', assignedAgent: ''
 };
@@ -67,7 +67,8 @@ const sortTransactions = (items, sortField, sortOrder) => {
 
 const fields = [
   ['address', 'Address', 'textarea', '32 Kirkpatrick St, Kirkland Lake, ON P2N 2H1'],
-  ['agent', 'Agent', 'text', 'Syed Naqvi'],
+  ['buyerAgent', 'Buyer Agent', 'text', 'Syed Naqvi'],
+  ['sellerAgent', 'Seller Agent', 'text', 'Linda Belanger'],
   ['closeOfDeal', 'Close of Deal', 'date'],
   ['salePrice', 'Sale Price', 'number', '133000'],
   ['buyer', 'Buyer', 'text', 'Muhammad Akbar Khan'],
@@ -121,7 +122,7 @@ function TransactionCard({ item, onDelete, showOwner, sortField, sortOrder, onSo
   const display = [
     ['Address', item.address, 'address'],
     ['Buyer', item.buyer, 'buyer'],
-    ['Agent', item.agent, 'agent'],
+    ['Buyer Agent', item.buyerAgent || item.agent, 'agent'],
     ['Close of Deal', item.closeOfDeal, 'closeOfDeal'],
     ['Sale Price', item.salePrice ? `$${Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : '—', 'salePrice'],
     ['Type', item.type, 'type'],
@@ -159,7 +160,7 @@ function TransactionCard({ item, onDelete, showOwner, sortField, sortOrder, onSo
 }
 
 const summaryFields = [
-  ['Address', 'address'], ['Agent', 'agent'], ['Close of Deal', 'closeOfDeal'], ['Sale Price', 'salePrice'], ['Buyer', 'buyer'],
+  ['Address', 'address'], ['Buyer Agent', 'buyerAgent'], ['Seller Agent', 'sellerAgent'], ['Close of Deal', 'closeOfDeal'], ['Sale Price', 'salePrice'], ['Buyer', 'buyer'],
   ['Acceptance Date', 'acceptanceDate'], ['Deal Number', 'dealNumber'], ['Email', 'email'], ['Co Agent', 'coBuyerAgent'], ['Seller', 'seller'],
   ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Condition Removal Date', 'subjectRemovalDate']
 ];
@@ -343,7 +344,9 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
   const provincePostal = (addressParts[2] || '').match(/^(.+?)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
   const [form, setForm] = useState({
     address: transaction.address || '',
-    agent: transaction.agent || '',
+    agent: transaction.buyerAgent || transaction.agent || '',
+    buyerAgent: transaction.buyerAgent || transaction.agent || '',
+    sellerAgent: transaction.sellerAgent || '',
     office: transaction.office || '',
     buyer: transaction.buyer || '',
     email: transaction.email || '',
@@ -375,7 +378,9 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
     const prov = (parts[2] || '').match(/^(.+?)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
     setForm({
       address: transaction.address || '',
-      agent: transaction.agent || '',
+      agent: transaction.buyerAgent || transaction.agent || '',
+      buyerAgent: transaction.buyerAgent || transaction.agent || '',
+      sellerAgent: transaction.sellerAgent || '',
       office: transaction.office || '',
       buyer: transaction.buyer || '',
       email: transaction.email || '',
@@ -460,6 +465,9 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
     const computedAddress = (form.address && form.address.trim()) || [street, form.city, cityLine].filter(Boolean).join(', ') || transaction.address || '';
     const payload = {
       ...form,
+      agent: form.buyerAgent || form.agent || '',
+      buyerAgent: form.buyerAgent || form.agent || '',
+      sellerAgent: form.sellerAgent || '',
       address: computedAddress,
       office: (form.office || '').trim(),
       sellerFirstName: firstName,
@@ -514,7 +522,11 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
         <h2>Transaction Information</h2>
       </div>
       <div className="transaction-form-grid">
-        {input('Agent', 'agent', 'text', true)}
+        {input('Buyer Agent', 'buyerAgent', 'text', true, false, e => {
+          update('buyerAgent', e.target.value);
+          update('agent', e.target.value);
+        })}
+        {input('Seller Agent', 'sellerAgent', 'text', false)}
         <label>
           <span>Office <b>*</b></span>
           <select
@@ -2277,7 +2289,21 @@ function TransactionDetail({ user, onLogout }) {
 
   if (loading) return <><Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
   if (!transaction) return <><Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
-  const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : (key === 'coBuyerAgent' ? (transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '')) : transaction[key]) || '—';
+  const valueFor = key => {
+    if (key === 'salePrice' && transaction[key]) {
+      return `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}`;
+    }
+    if (key === 'buyerAgent') {
+      return transaction.buyerAgent || transaction.agent || '—';
+    }
+    if (key === 'sellerAgent') {
+      return transaction.sellerAgent || '—';
+    }
+    if (key === 'coBuyerAgent') {
+      return transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '') || '—';
+    }
+    return transaction[key] || '—';
+  };
   const visibleTabs = user.role === 'admin' ? ['Transaction', 'Contacts', 'Commission', 'Checklist', 'Receipt', 'Invoice'] : ['Transaction', 'Contacts', 'Commission', 'Checklist'];
 
   return <>
@@ -2446,6 +2472,9 @@ function TransactionModal({ onClose, onCreated, user }) {
       const { firstName, lastName } = splitSellerName(form.seller);
       const payload = {
         ...form,
+        agent: form.buyerAgent || form.agent || '',
+        buyerAgent: form.buyerAgent || form.agent || '',
+        sellerAgent: form.sellerAgent || '',
         sellerFirstName: form.sellerFirstName || firstName,
         sellerLastName: form.sellerLastName || lastName,
         contacts: {
@@ -2487,12 +2516,12 @@ function TransactionModal({ onClose, onCreated, user }) {
             }
             return (
               <label className={type === 'textarea' ? 'wide' : ''} key={name}>
-                <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
+                <span>{label}{['address', 'agent', 'buyerAgent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
                 {name === 'dealNumber' ? <input value={dealPreview || 'Assigned automatically'} readOnly />
                   : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
                     : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
                       : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
-                        : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address', 'agent', 'buyer', 'email'].includes(name)} />}
+                        : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address', 'agent', 'buyerAgent', 'buyer', 'email'].includes(name)} />}
               </label>
             );
           })}
@@ -2549,7 +2578,7 @@ function TransactionsPage({ user, onLogout }) {
     const assignedAgentId = typeof t.assignedAgent === 'object' ? (t.assignedAgent?._id || t.assignedAgent?.id) : t.assignedAgent;
     const matchesAgent = !selectedAgent || String(assignedAgentId || '') === selectedAgent;
     const matchesStatus = !dealStatusFilter || getDealStatus(t) === dealStatusFilter;
-    const matchesQuery = [t.address, t.buyer, t.seller, t.agent, t.dealNumber].some(v => String(v || '').toLowerCase().includes(query.toLowerCase()));
+    const matchesQuery = [t.address, t.buyer, t.seller, t.agent, t.buyerAgent, t.sellerAgent, t.dealNumber].some(v => String(v || '').toLowerCase().includes(query.toLowerCase()));
     return matchesAgent && matchesStatus && matchesQuery;
   });
   const displayedTransactions = sortTransactions(filtered, sortField, sortOrder);
@@ -2570,7 +2599,7 @@ function TransactionsPage({ user, onLogout }) {
     setExporting(true);
     try {
       const columns = [
-        ['Deal Number', 'dealNumber'], ['Deal Status', item => getDealStatus(item)], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
+        ['Deal Number', 'dealNumber'], ['Deal Status', item => getDealStatus(item)], ['Address', 'address'], ['Buyer Agent', item => item.buyerAgent || item.agent || ''], ['Seller Agent', item => item.sellerAgent || ''], ['Co Agent', 'coBuyerAgent'],
         ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', item => item.salePrice ? Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 }) : ''],
         ['Type', 'type'], ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
         ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'],
