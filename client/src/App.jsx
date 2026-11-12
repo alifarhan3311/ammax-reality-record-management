@@ -1,10 +1,23 @@
-import { Fragment, useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, Download, Eye, EyeOff, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, Users, X } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Activity, AlertCircle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, Download, Eye, EyeOff, FilePlus2, FileText, LogOut, Moon, Pencil, Plus, Printer, Receipt, RotateCcw, Search, ShieldCheck, Sun, Trash2, UserRound, Users, X } from 'lucide-react';
+
+const splitSellerName = sellerName => {
+  const trimmed = String(sellerName || '').trim();
+  if (!trimmed) return { firstName: '', lastName: '' };
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '' };
+  }
+  return {
+    firstName: parts.slice(0, -1).join(' '),
+    lastName: parts.at(-1) || ''
+  };
+};
 
 const emptyForm = {
   address: '', agent: '', closeOfDeal: '', salePrice: '', buyer: '',
-  acceptanceDate: '', dealNumber: '', email: '', seller: '', reviewer: '',
+  acceptanceDate: '', dealNumber: '', email: '', seller: '', sellerFirstName: '', sellerLastName: '', reviewer: '',
   type: 'Purchase', checklistType: 'Buyer Side Sale', office: '', subjectRemovalDate: '', assignedAgent: ''
 };
 const cleanNumberInput = value => String(value ?? '').replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
@@ -15,6 +28,15 @@ const formatNumberInput = value => {
   const grouped = (integer || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return decimals === undefined ? grouped : `${grouped}.${decimals}`;
 };
+
+function useThemePreference() {
+  const [dark, setDark] = useState(() => localStorage.getItem('ammax-theme') === 'dark');
+  useEffect(() => {
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    localStorage.setItem('ammax-theme', dark ? 'dark' : 'light');
+  }, [dark]);
+  return [dark, () => setDark(current => !current)];
+}
 
 const sortTransactions = (items, sortField, sortOrder) => {
   if (!sortField) return items;
@@ -130,54 +152,448 @@ const summaryFields = [
   ['Type', 'type'], ['Checklist Type', 'checklistType'], ['Office', 'office'], ['Condition Removal Date', 'subjectRemovalDate']
 ];
 
-function TransactionEditForm({ transaction, onUpdated }) {
+function CoAgentMultiSelect({ value = '', onChange, agents = [], disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  const selected = value
+    ? String(value)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const optionList = [
+    ...agents.map(a => a.name || a),
+    'Seller',
+    'Buyer'
+  ];
+  const uniqueOptions = Array.from(new Set(optionList.filter(Boolean)));
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const toggleOption = (opt) => {
+    if (disabled) return;
+    const exists = selected.includes(opt);
+    const next = exists ? selected.filter(s => s !== opt) : [...selected, opt];
+    onChange(next.join(', '));
+  };
+
+  const removeChip = (e, opt) => {
+    e.stopPropagation();
+    if (disabled) return;
+    const next = selected.filter(s => s !== opt);
+    onChange(next.join(', '));
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={`coagent-multiselect ${disabled ? 'is-disabled' : ''} ${open ? 'is-open' : ''}`}
+    >
+      <div
+        className="coagent-multiselect-trigger"
+        onClick={() => !disabled && setOpen(!open)}
+        tabIndex={disabled ? -1 : 0}
+        role="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onKeyDown={(e) => {
+          if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+      >
+        <div className="coagent-chips-wrap">
+          {selected.length === 0 ? (
+            <span className="coagent-placeholder">{disabled ? 'None' : 'Select Co Agent(s)...'}</span>
+          ) : (
+            selected.map(item => (
+              <span key={item} className="coagent-chip">
+                <span className="coagent-chip-text">{item}</span>
+                {!disabled && (
+                  <button
+                    type="button"
+                    className="coagent-chip-remove"
+                    onClick={(e) => removeChip(e, item)}
+                    title={`Remove ${item}`}
+                    aria-label={`Remove ${item}`}
+                  >
+                    <X size={11} strokeWidth={2.5} />
+                  </button>
+                )}
+              </span>
+            ))
+          )}
+        </div>
+        {!disabled && (
+          <span className="coagent-arrow">
+            <ChevronDown size={15} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s ease' }} />
+          </span>
+        )}
+      </div>
+
+      {open && !disabled && (
+        <div className="coagent-dropdown-menu" role="listbox">
+          {uniqueOptions.map(opt => {
+            const isChecked = selected.includes(opt);
+            return (
+              <div
+                key={opt}
+                className={`coagent-option-item ${isChecked ? 'is-selected' : ''}`}
+                onClick={() => toggleOption(opt)}
+                role="option"
+                aria-selected={isChecked}
+              >
+                <div className={`coagent-custom-checkbox ${isChecked ? 'is-checked' : ''}`}>
+                  {isChecked && <Check size={11} strokeWidth={3} color="#fff" />}
+                </div>
+                <span className="coagent-option-label">{opt}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const provinceMap = {
+  ON: 'Ontario',
+  AB: 'Alberta',
+  BC: 'British Columbia',
+  MB: 'Manitoba',
+  NB: 'New Brunswick',
+  NL: 'Newfoundland and Labrador',
+  NS: 'Nova Scotia',
+  PE: 'Prince Edward Island',
+  QC: 'Quebec',
+  SK: 'Saskatchewan'
+};
+const normalizeProvince = prov => {
+  const p = String(prov || '').trim();
+  return provinceMap[p.toUpperCase()] || p;
+};
+
+const toDateInputValue = val => {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    try {
+      return d.toISOString().slice(0, 10);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+};
+
+function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditMode }) {
   const addressParts = transaction.address?.split(',').map(part => part.trim()) || [];
   const streetMatch = (addressParts[0] || '').match(/^(\d+[A-Za-z-]*)\s+(.*)$/);
   const provincePostal = (addressParts[2] || '').match(/^(.+?)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
   const [form, setForm] = useState({
-    agent: transaction.agent || '', office: transaction.office || '', mlsNumber: transaction.mlsNumber || '', checklistType: transaction.checklistType || 'Buyer Side Sale',
-    streetNumber: transaction.streetNumber || streetMatch?.[1] || '', direction: transaction.direction || '', streetName: transaction.streetName || streetMatch?.[2] || '', unitNumber: transaction.unitNumber || '',
-    postalCode: transaction.postalCode || provincePostal?.[2] || '', province: transaction.province || provincePostal?.[1] || '', city: transaction.city || addressParts[1] || '', county: transaction.county || '',
-    coBuyerAgent: transaction.coBuyerAgent || '', type: transaction.type || 'Purchase', salePrice: transaction.salePrice || '',
-    dealNumber: transaction.dealNumber || '', officeLead: transaction.officeLead || '', subjectRemovalDate: transaction.subjectRemovalDate || '',
-    acceptanceDate: transaction.acceptanceDate || '', closeOfDeal: transaction.closeOfDeal || '', actualClosingDate: transaction.actualClosingDate || ''
+    address: transaction.address || '',
+    agent: transaction.agent || '',
+    office: transaction.office || '',
+    buyer: transaction.buyer || '',
+    email: transaction.email || '',
+    seller: transaction.seller || '',
+    mlsNumber: transaction.mlsNumber || '',
+    checklistType: transaction.checklistType || 'Buyer Side Sale',
+    streetNumber: transaction.streetNumber || streetMatch?.[1] || '',
+    direction: transaction.direction || '',
+    streetName: transaction.streetName || streetMatch?.[2] || '',
+    unitNumber: transaction.unitNumber || '',
+    postalCode: transaction.postalCode || provincePostal?.[2] || '',
+    province: normalizeProvince(transaction.province || provincePostal?.[1] || ''),
+    city: transaction.city || addressParts[1] || '',
+    county: transaction.county || '',
+    coBuyerAgent: transaction.coBuyerAgent || '',
+    type: transaction.type || 'Purchase',
+    salePrice: transaction.salePrice || '',
+    dealNumber: transaction.dealNumber || '',
+    officeLead: transaction.officeLead || '',
+    subjectRemovalDate: toDateInputValue(transaction.subjectRemovalDate),
+    acceptanceDate: toDateInputValue(transaction.acceptanceDate),
+    closeOfDeal: toDateInputValue(transaction.closeOfDeal),
+    actualClosingDate: toDateInputValue(transaction.actualClosingDate)
   });
-  const [saving, setSaving] = useState(false); const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    const parts = transaction.address?.split(',').map(part => part.trim()) || [];
+    const street = (parts[0] || '').match(/^(\d+[A-Za-z-]*)\s+(.*)$/);
+    const prov = (parts[2] || '').match(/^(.+?)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
+    setForm({
+      address: transaction.address || '',
+      agent: transaction.agent || '',
+      office: transaction.office || '',
+      buyer: transaction.buyer || '',
+      email: transaction.email || '',
+      seller: transaction.seller || '',
+      mlsNumber: transaction.mlsNumber || '',
+      checklistType: transaction.checklistType || 'Buyer Side Sale',
+      streetNumber: transaction.streetNumber || street?.[1] || '',
+      direction: transaction.direction || '',
+      streetName: transaction.streetName || street?.[2] || '',
+      unitNumber: transaction.unitNumber || '',
+      postalCode: transaction.postalCode || prov?.[2] || '',
+      province: normalizeProvince(transaction.province || prov?.[1] || ''),
+      city: transaction.city || parts[1] || '',
+      county: transaction.county || '',
+      coBuyerAgent: transaction.coBuyerAgent || '',
+      type: transaction.type || 'Purchase',
+      salePrice: transaction.salePrice || '',
+      dealNumber: transaction.dealNumber || '',
+      officeLead: transaction.officeLead || '',
+      subjectRemovalDate: toDateInputValue(transaction.subjectRemovalDate),
+      acceptanceDate: toDateInputValue(transaction.acceptanceDate),
+      closeOfDeal: toDateInputValue(transaction.closeOfDeal),
+      actualClosingDate: toDateInputValue(transaction.actualClosingDate)
+    });
+  }, [transaction]);
+
+  const [agents, setAgents] = useState([]);
+  useEffect(() => {
+    fetch('/api/agents')
+      .then(readApiResponse)
+      .then(items => setAgents(items))
+      .catch(() => {});
+  }, []);
+
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
   const update = (name, value) => setForm(current => ({ ...current, [name]: value }));
+
+  const handleAddressChange = val => {
+    const updates = { address: val };
+    const parts = val.split(',').map(p => p.trim());
+    if (parts.length > 0 && parts[0]) {
+      const street = parts[0].match(/^(\d+[A-Za-z-]*)\s+(.*)$/);
+      if (street) {
+        updates.streetNumber = street[1];
+        updates.streetName = street[2];
+      } else {
+        updates.streetName = parts[0];
+      }
+    }
+    if (parts.length > 1 && parts[1]) {
+      updates.city = parts[1];
+    }
+    if (parts.length > 2 && parts[2]) {
+      const provPostal = parts[2].match(/^(.+?)\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
+      if (provPostal) {
+        updates.province = normalizeProvince(provPostal[1]);
+        updates.postalCode = provPostal[2];
+      }
+    }
+    setForm(current => ({ ...current, ...updates }));
+  };
+
+  const updateAddressPart = (name, val) => {
+    setForm(current => {
+      const next = { ...current, [name]: val };
+      const street = [next.streetNumber, next.direction, next.streetName].filter(Boolean).join(' ');
+      const cityLine = [next.province, next.postalCode].filter(Boolean).join(' ');
+      next.address = [street, next.city, cityLine].filter(Boolean).join(', ') || next.address;
+      return next;
+    });
+  };
+
   const save = async event => {
-    event.preventDefault(); setSaving(true); setMessage('');
+    event.preventDefault();
+    if (readOnly) return;
+    setSaving(true);
+    setMessage('');
+    const { firstName, lastName } = splitSellerName(form.seller);
     const street = [form.streetNumber, form.direction, form.streetName].filter(Boolean).join(' ');
     const cityLine = [form.province, form.postalCode].filter(Boolean).join(' ');
-    const payload = { ...form, address: [street, form.city, cityLine].filter(Boolean).join(', ') };
+    const computedAddress = (form.address && form.address.trim()) || [street, form.city, cityLine].filter(Boolean).join(', ') || transaction.address || '';
+    const payload = {
+      ...form,
+      address: computedAddress,
+      office: (form.office || '').trim(),
+      sellerFirstName: firstName,
+      sellerLastName: lastName,
+      contacts: {
+        ...(transaction.contacts || {}),
+        seller_landlord: [{
+          ...blankContact,
+          ...((transaction.contacts?.seller_landlord?.[0]) || {}),
+          firstName: firstName || transaction.sellerFirstName || '',
+          lastName: lastName || transaction.sellerLastName || '',
+          email: form.email || transaction.email || ''
+        }]
+      }
+    };
     try {
-      const response = await fetch(`/api/transactions/${transaction._id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const result = await response.json(); if (!response.ok) throw new Error(result.message || 'Could not update transaction');
-      onUpdated(result); setMessage('Transaction saved successfully.');
-    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
+      const response = await fetch(`/api/transactions/${transaction._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Could not update transaction');
+      onUpdated(result);
+      setMessage('Transaction saved successfully.');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
   };
-  const input = (label, name, type = 'text', required = false, readOnly = false) => <label><span>{label}{required && <b> *</b>}</span><input type={type} step={type === 'number' ? '0.01' : undefined} value={form[name]} onChange={e => update(name, e.target.value)} required={required} readOnly={readOnly} /></label>;
-  return <form className="transaction-edit-form" onSubmit={save}>
-    <div className="section-heading"><span className="eyebrow">Property & Deal</span><h2>Transaction Information</h2></div>
-    <div className="transaction-form-grid">
-      {input('Agent', 'agent', 'text', true)}
-      <label><span>Office <b>*</b></span><select value={form.office} onChange={e => update('office', e.target.value)} required><option value="">Select office</option><option>Brampton</option><option>Toronto</option><option>Mississauga</option><option>Vaughan</option><option>Other</option></select></label>
-      {input('MLS#', 'mlsNumber')}
-      <label><span>Checklist Type <b>*</b></span><select value={form.checklistType} onChange={e => update('checklistType', e.target.value)} required><option>Buyer Side Sale</option><option>Seller Side Sale</option><option>Rental</option></select></label>
-      <div className="address-pair">{input('Street No.', 'streetNumber', 'text', true)}<label><span>Direction</span><select value={form.direction} onChange={e => update('direction', e.target.value)}><option value="">Select</option><option>N</option><option>S</option><option>E</option><option>W</option><option>NE</option><option>NW</option><option>SE</option><option>SW</option></select></label></div>
-      {input('Street Name', 'streetName', 'text', true)}
-      <div className="address-pair">{input('Unit #', 'unitNumber')}{input('Postal Code', 'postalCode', 'text', true)}</div>
-      <label><span>Province <b>*</b></span><select value={form.province} onChange={e => update('province', e.target.value)} required><option value="">Select province</option><option>Ontario</option><option>Alberta</option><option>British Columbia</option><option>Manitoba</option><option>New Brunswick</option><option>Newfoundland and Labrador</option><option>Nova Scotia</option><option>Prince Edward Island</option><option>Quebec</option><option>Saskatchewan</option></select></label>
-      {input('City', 'city', 'text', true)}{input('County', 'county')}<label><span>Co Agent</span><select value={form.coBuyerAgent} onChange={e => update('coBuyerAgent', e.target.value)}><option value="">Select</option><option>Seller</option><option>Buyer</option></select></label>
-      <label><span>Type (Representation) <b>*</b></span><select value={form.type} onChange={e => update('type', e.target.value)} required><option>Purchase</option><option>Sale</option><option>Lease</option></select></label>
-      <label><span>Sale Price <b>*</b></span><input inputMode="decimal" value={formatNumberInput(form.salePrice)} onChange={e => update('salePrice', cleanNumberInput(e.target.value))} required /></label>
-      {input('Deal Number', 'dealNumber', 'text', false, true)}
-      <label><span>Office Lead</span><select value={form.officeLead} onChange={e => update('officeLead', e.target.value)}><option value="">Select</option><option>Yes</option><option>No</option></select></label>
-      {input('Condition Removal Date', 'subjectRemovalDate', 'date')}
-      {input('Acceptance Date', 'acceptanceDate', 'date', true)}{input('Closing Date', 'closeOfDeal', 'date', true)}
-      {input('Actual Closing Date', 'actualClosingDate', 'date')}
-    </div>
-    <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Transaction'}</button></div>
-  </form>;
+
+  const input = (label, name, type = 'text', required = false, isReadOnly = false, customOnChange = null) => (
+    <label>
+      <span>{label}{required && !readOnly && <b> *</b>}</span>
+      <input
+        type={type}
+        step={type === 'number' ? '0.01' : undefined}
+        value={form[name] ?? ''}
+        onChange={customOnChange || (e => update(name, e.target.value))}
+        required={required && !readOnly}
+        readOnly={readOnly || isReadOnly}
+        disabled={readOnly}
+      />
+    </label>
+  );
+
+  return (
+    <form className="transaction-edit-form" onSubmit={save}>
+      <div className="section-heading">
+        <span className="eyebrow">{readOnly ? 'View Mode' : 'Property & Deal'}</span>
+        <h2>Transaction Information</h2>
+      </div>
+      <div className="transaction-form-grid">
+        {input('Agent', 'agent', 'text', true)}
+        <label>
+          <span>Office <b>*</b></span>
+          <select
+            value={form.office}
+            onChange={e => update('office', e.target.value)}
+            required={!readOnly}
+            disabled={readOnly}
+          >
+            <option value="">Select office</option>
+            <option value="3001 Markham Rd Unit 20, Scarborough, ON M1X 1L6">3001 Markham Rd Unit 20, Scarborough, ON M1X 1L6</option>
+            <option value="Brampton">Brampton</option>
+            <option value="Toronto">Toronto</option>
+            <option value="Mississauga">Mississauga</option>
+            <option value="Vaughan">Vaughan</option>
+            <option value="Other">Other</option>
+            {form.office && !['3001 Markham Rd Unit 20, Scarborough, ON M1X 1L6', 'Brampton', 'Toronto', 'Mississauga', 'Vaughan', 'Other'].includes(form.office) && (
+              <option value={form.office}>{form.office}</option>
+            )}
+          </select>
+        </label>
+        {input('Buyer', 'buyer', 'text', true)}
+        {input('Email', 'email', 'email', true)}
+        {input('Seller', 'seller', 'text')}
+        {input('MLS#', 'mlsNumber')}
+        {input('Address', 'address', 'text', true, false, e => handleAddressChange(e.target.value))}
+        <label>
+          <span>Checklist Type <b>*</b></span>
+          <select disabled={readOnly} value={form.checklistType} onChange={e => update('checklistType', e.target.value)} required={!readOnly}>
+            <option>Buyer Side Sale</option><option>Seller Side Sale</option><option>Rental</option>
+          </select>
+        </label>
+        <div className="address-pair">
+          {input('Street No.', 'streetNumber', 'text', false, false, e => updateAddressPart('streetNumber', e.target.value))}
+          <label>
+            <span>Direction</span>
+            <select disabled={readOnly} value={form.direction} onChange={e => updateAddressPart('direction', e.target.value)}>
+              <option value="">Select</option>
+              <option>N</option><option>S</option><option>E</option><option>W</option>
+              <option>NE</option><option>NW</option><option>SE</option><option>SW</option>
+            </select>
+          </label>
+        </div>
+        {input('Street Name', 'streetName', 'text', false, false, e => updateAddressPart('streetName', e.target.value))}
+        <div className="address-pair">
+          {input('Unit #', 'unitNumber', 'text', false, false, e => updateAddressPart('unitNumber', e.target.value))}
+          {input('Postal Code', 'postalCode', 'text', false, false, e => updateAddressPart('postalCode', e.target.value))}
+        </div>
+        <label>
+          <span>Province <b>*</b></span>
+          <select disabled={readOnly} value={form.province} onChange={e => updateAddressPart('province', e.target.value)}>
+            <option value="">Select province</option>
+            <option>Ontario</option><option>Alberta</option><option>British Columbia</option>
+            <option>Manitoba</option><option>New Brunswick</option><option>Newfoundland and Labrador</option>
+            <option>Nova Scotia</option><option>Prince Edward Island</option><option>Quebec</option>
+            <option>Saskatchewan</option>
+          </select>
+        </label>
+        {input('City', 'city', 'text', false, false, e => updateAddressPart('city', e.target.value))}
+        {input('County', 'county', 'text', false, false, e => updateAddressPart('county', e.target.value))}
+        <label>
+          <span>Co Agent</span>
+          <CoAgentMultiSelect
+            value={form.coBuyerAgent}
+            onChange={val => update('coBuyerAgent', val)}
+            agents={agents}
+            disabled={readOnly}
+          />
+        </label>
+        <label>
+          <span>Type (Representation) <b>*</b></span>
+          <select disabled={readOnly} value={form.type} onChange={e => update('type', e.target.value)} required={!readOnly}>
+            <option>Purchase</option><option>Sale</option><option>Lease</option>
+          </select>
+        </label>
+        <label>
+          <span>Sale Price <b>*</b></span>
+          <input
+            inputMode="decimal"
+            value={formatNumberInput(form.salePrice)}
+            onChange={e => update('salePrice', cleanNumberInput(e.target.value))}
+            required={!readOnly}
+            readOnly={readOnly}
+            disabled={readOnly}
+          />
+        </label>
+        {input('Deal Number', 'dealNumber', 'text', false, false)}
+        <label>
+          <span>Office Lead</span>
+          <select disabled={readOnly} value={form.officeLead} onChange={e => update('officeLead', e.target.value)}>
+            <option value="">Select</option><option>Yes</option><option>No</option>
+          </select>
+        </label>
+        {input('Condition Removal Date', 'subjectRemovalDate', 'date')}
+        {input('Acceptance Date', 'acceptanceDate', 'date')}
+        {input('Close of Deal', 'closeOfDeal', 'date')}
+        {input('Actual Closing Date', 'actualClosingDate', 'date')}
+      </div>
+      {readOnly ? (
+        <div className="contact-actions">
+          <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Click "Switch to Edit Mode" to make changes.</p>
+          {onEditMode && (
+            <button className="primary" type="button" onClick={onEditMode}>
+              <Pencil size={14} style={{ marginRight: '6px' }} /> Enable Edit Mode
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="contact-actions">
+          {message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}
+          <button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Transaction'}</button>
+        </div>
+      )}
+    </form>
+  );
 }
 
 const contactCategories = ['Seller / Landlord', 'Buyer / Tenant', 'Lawyer Information', 'Agent Representing Other Side', 'Transaction Coordinator'];
@@ -193,8 +609,12 @@ function LegacyContactsForm({ transaction, onUpdated }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const key = contactKey(category);
-  const sellerNames = transaction.seller?.trim().split(/\s+/) || [];
-  const initialSeller = key === 'seller_landlord' ? { firstName: sellerNames.slice(0, -1).join(' '), lastName: sellerNames.at(-1) || '', email: transaction.email || '' } : {};
+  const parsedSeller = splitSellerName(transaction.seller);
+  const initialSeller = key === 'seller_landlord' ? {
+    firstName: transaction.sellerFirstName || parsedSeller.firstName,
+    lastName: transaction.sellerLastName || parsedSeller.lastName,
+    email: transaction.email || ''
+  } : {};
   const data = { ...blankContact, ...initialSeller, ...(contacts[key] || {}) };
   useEffect(() => {
     if (search.trim().length < 2) { setSearchResults([]); setSearching(false); return; }
@@ -265,7 +685,7 @@ function LegacyContactsForm({ transaction, onUpdated }) {
   </div>;
 }
 
-function ContactsForm({ transaction, onUpdated }) {
+function ContactsForm({ transaction, onUpdated, readOnly = false }) {
   const [category, setCategory] = useState(contactCategories[0]);
   const [contacts, setContacts] = useState(transaction.contacts || {});
   const [searches, setSearches] = useState({});
@@ -273,10 +693,24 @@ function ContactsForm({ transaction, onUpdated }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const key = contactKey(category);
-  const sellerNames = transaction.seller?.trim().split(/\s+/) || [];
-  const initialSeller = key === 'seller_landlord' ? { firstName: sellerNames.slice(0, -1).join(' '), lastName: sellerNames.at(-1) || '', email: transaction.email || '' } : {};
+  const parsedSeller = splitSellerName(transaction.seller);
+  const initialSeller = key === 'seller_landlord' ? {
+    firstName: transaction.sellerFirstName || parsedSeller.firstName,
+    lastName: transaction.sellerLastName || parsedSeller.lastName,
+    email: transaction.email || ''
+  } : {};
   const stored = contacts[key];
-  const entries = (Array.isArray(stored) ? stored : stored ? [stored] : [{ ...blankContact, ...initialSeller }]).map(contact => ({ ...blankContact, ...contact }));
+  let rawEntries = (Array.isArray(stored) ? stored : stored ? [stored] : []).map(contact => ({ ...blankContact, ...contact }));
+  if (rawEntries.length === 0) {
+    rawEntries = [{ ...blankContact, ...initialSeller }];
+  } else if (key === 'seller_landlord' && rawEntries.length > 0) {
+    if (!rawEntries[0].firstName && !rawEntries[0].lastName && (initialSeller.firstName || initialSeller.lastName)) {
+      rawEntries[0] = { ...rawEntries[0], firstName: initialSeller.firstName, lastName: initialSeller.lastName, email: rawEntries[0].email || initialSeller.email };
+    } else if (!rawEntries[0].email && initialSeller.email) {
+      rawEntries[0] = { ...rawEntries[0], email: initialSeller.email };
+    }
+  }
+  const entries = rawEntries;
   const setEntries = next => setContacts(current => ({ ...current, [key]: next }));
   const update = (index, name, value) => setEntries(entries.map((contact, position) => position === index ? { ...contact, [name]: value } : contact));
   const addContact = () => setEntries([...entries, { ...blankContact }]);
@@ -287,6 +721,7 @@ function ContactsForm({ transaction, onUpdated }) {
     setEntries(entries.map((contact, position) => position === index ? { ...contact, streetNumber: street?.[1] || '', streetName: street?.[2] || parts[0] || '', city: parts[1] || '', province: parts[2] || '' } : contact));
   };
   const searchContacts = async (index, value) => {
+    if (readOnly) return;
     setSearches(current => ({ ...current, [index]: value }));
     if (value.trim().length < 2) return setResults(current => ({ ...current, [index]: [] }));
     try {
@@ -297,12 +732,15 @@ function ContactsForm({ transaction, onUpdated }) {
     } catch (error) { setMessage(error.message); }
   };
   const selectContact = (index, result) => {
+    if (readOnly) return;
     setEntries(entries.map((contact, position) => position === index ? { ...blankContact, ...result.contact } : contact));
     setSearches(current => ({ ...current, [index]: '' }));
     setResults(current => ({ ...current, [index]: [] }));
   };
   const save = async event => {
-    event.preventDefault(); setSaving(true); setMessage('');
+    event.preventDefault();
+    if (readOnly) return;
+    setSaving(true); setMessage('');
     const finalContacts = { ...contacts, [key]: entries };
     try {
       const response = await fetch(`/api/transactions/${transaction._id}/contacts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: finalContacts }) });
@@ -316,27 +754,37 @@ function ContactsForm({ transaction, onUpdated }) {
   return <div className="contacts-layout">
     <aside className="contact-sidebar">{contactCategories.map(item => <button className={category === item ? 'active' : ''} onClick={() => { setCategory(item); setMessage(''); setSearches({}); setResults({}); }} key={item}>{item}</button>)}</aside>
     <form className="contact-form" onSubmit={save}>
-      <div className="contact-form-heading"><div><span className="eyebrow">{category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
+      <div className="contact-form-heading"><div><span className="eyebrow">{readOnly ? `${category} (View Only)` : category}</span><h2>Contact information</h2></div>{contacts[key] && <span className="saved-badge">Saved</span>}</div>
       {entries.map((data, index) => <section className="contact-entry" key={`${key}-${index}`}>
-        <div className="contact-entry-heading"><h3>{prefix} {index + 1}</h3>{index > 0 && <button className="remove-contact" type="button" onClick={() => removeContact(index)}><Trash2 size={15} /> Remove</button>}</div>
-        <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17} /><input value={searches[index] || ''} onChange={event => searchContacts(index, event.target.value)} placeholder="Search by name, email, phone or company" /></div>{(results[index] || []).length > 0 && <div className="contact-search-results">{results[index].map(result => <button type="button" key={`${result.id}-${index}`} onClick={() => selectContact(index, result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}</div>
-        <div className="or-divider"><span>Or Enter New Contact</span></div>
-        <label className="check-field"><input type="checkbox" checked={data.entity} onChange={event => update(index, 'entity', event.target.checked)} /><span>{prefix} is a trust, company, or other entity</span></label>
+        <div className="contact-entry-heading"><h3>{prefix} {index + 1}</h3>{index > 0 && !readOnly && <button className="remove-contact" type="button" onClick={() => removeContact(index)}><Trash2 size={15} /> Remove</button>}</div>
+        {!readOnly && (
+          <>
+            <div className="contact-search"><span>Search Contacts</span><div className="search"><Search size={17} /><input value={searches[index] || ''} onChange={event => searchContacts(index, event.target.value)} placeholder="Search by name, email, phone or company" /></div>{(results[index] || []).length > 0 && <div className="contact-search-results">{results[index].map(result => <button type="button" key={`${result.id}-${index}`} onClick={() => selectContact(index, result)}><strong>{[result.contact.firstName, result.contact.lastName].filter(Boolean).join(' ') || result.contact.companyName || 'Unnamed contact'}</strong><span>{result.contact.email || result.contact.phone || result.transactionAddress}</span><small>{result.category.replaceAll('_', ' ')} · {result.transactionAddress}</small></button>)}</div>}</div>
+            <div className="or-divider"><span>Or Enter New Contact</span></div>
+          </>
+        )}
+        <label className="check-field"><input type="checkbox" checked={data.entity} disabled={readOnly} onChange={event => update(index, 'entity', event.target.checked)} /><span>{prefix} is a trust, company, or other entity</span></label>
         <div className="contact-fields">
-          <label><span>{prefix}'s First Name <b>*</b></span><input value={data.firstName} onChange={e => update(index, 'firstName', e.target.value)} required={!data.entity} /></label><label><span>{prefix}'s Last Name <b>*</b></span><input value={data.lastName} onChange={e => update(index, 'lastName', e.target.value)} required={!data.entity} /></label>
-          <label><span>Company Name</span><input value={data.companyName} onChange={e => update(index, 'companyName', e.target.value)} /></label><label><span>E-mail</span><input type="email" value={data.email} onChange={e => update(index, 'email', e.target.value)} /></label>
+          <label><span>{prefix}'s First Name {!readOnly && !data.entity && <b>*</b>}</span><input value={data.firstName} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'firstName', e.target.value)} required={!readOnly && !data.entity} /></label><label><span>{prefix}'s Last Name {!readOnly && !data.entity && <b>*</b>}</span><input value={data.lastName} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'lastName', e.target.value)} required={!readOnly && !data.entity} /></label>
+          <label><span>Company Name</span><input value={data.companyName} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'companyName', e.target.value)} /></label><label><span>E-mail</span><input type="email" value={data.email} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'email', e.target.value)} /></label>
         </div>
-        <button className="copy-address" type="button" onClick={() => copyAddress(index)}>Copy property address to {prefix.toLowerCase()}'s address</button>
+        {!readOnly && <button className="copy-address" type="button" onClick={() => copyAddress(index)}>Copy property address to {prefix.toLowerCase()}'s address</button>}
         <div className="contact-fields">
-          <label><span>Street Number</span><input value={data.streetNumber} onChange={e => update(index, 'streetNumber', e.target.value)} /></label><label><span>Street Name</span><input value={data.streetName} onChange={e => update(index, 'streetName', e.target.value)} /></label>
-          <label><span>Postal Code</span><input value={data.postalCode} onChange={e => update(index, 'postalCode', e.target.value)} /></label><label><span>City</span><input value={data.city} onChange={e => update(index, 'city', e.target.value)} /></label>
-          <label><span>Province</span><input value={data.province} onChange={e => update(index, 'province', e.target.value)} /></label><label><span>Fax</span><input value={data.fax} onChange={e => update(index, 'fax', e.target.value)} /></label>
-          <label><span>Phone</span><input value={data.phone} onChange={e => update(index, 'phone', e.target.value)} /></label><label><span>Alternate Phone</span><input value={data.alternatePhone} onChange={e => update(index, 'alternatePhone', e.target.value)} /></label>
-          <label className="contact-wide"><span>Notes</span><textarea value={data.notes} onChange={e => update(index, 'notes', e.target.value)} /></label><label className="contact-wide"><span>Forwarding Address</span><textarea value={data.forwardingAddress} onChange={e => update(index, 'forwardingAddress', e.target.value)} /></label>
+          <label><span>Street Number</span><input value={data.streetNumber} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'streetNumber', e.target.value)} /></label><label><span>Street Name</span><input value={data.streetName} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'streetName', e.target.value)} /></label>
+          <label><span>Postal Code</span><input value={data.postalCode} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'postalCode', e.target.value)} /></label><label><span>City</span><input value={data.city} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'city', e.target.value)} /></label>
+          <label><span>Province</span><input value={data.province} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'province', e.target.value)} /></label><label><span>Fax</span><input value={data.fax} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'fax', e.target.value)} /></label>
+          <label><span>Phone</span><input value={data.phone} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'phone', e.target.value)} /></label><label><span>Alternate Phone</span><input value={data.alternatePhone} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'alternatePhone', e.target.value)} /></label>
+          <label className="contact-wide"><span>Notes</span><textarea value={data.notes} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'notes', e.target.value)} /></label><label className="contact-wide"><span>Forwarding Address</span><textarea value={data.forwardingAddress} disabled={readOnly} readOnly={readOnly} onChange={e => update(index, 'forwardingAddress', e.target.value)} /></label>
         </div>
       </section>)}
-      <button className="add-contact-button" type="button" onClick={addContact}>+ Add Another {prefix}</button>
-      <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${category}`}</button></div>
+      {!readOnly && <button className="add-contact-button" type="button" onClick={addContact}>+ Add Another {prefix}</button>}
+      {readOnly ? (
+        <div className="contact-actions">
+          <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Contacts cannot be edited.</p>
+        </div>
+      ) : (
+        <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : `Save ${category}`}</button></div>
+      )}
     </form>
   </div>;
 }
@@ -344,11 +792,12 @@ function ContactsForm({ transaction, onUpdated }) {
 const blankCommission = { salePrice: '', personalDeal: 'no', listingCommissionPercent: '', listingCommissionAmount: '', saleCommissionPercent: '', saleCommissionAmount: '', officeGrossCommission: '', adminBrokerageComp: '', otherDeductions: '', holdTrustMoney: 'no', depositAmount: '', chequeDate: '', logBookDate: '', referralType: '', referralAgent: '', referralBrokerageName: '', referralAmount: '', referralPercent: '', supportingDocument: '', instructions: '' };
 const money = value => value === '' || value === null || value === undefined ? '' : Number(value).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 
-function CommissionForm({ transaction, onUpdated, user }) {
+function CommissionForm({ transaction, onUpdated, user, readOnly = false }) {
   const [form, setForm] = useState(() => {
     const savedCommission = transaction.commission || {};
     const savedSplits = Array.isArray(savedCommission.splits) ? savedCommission.splits : [];
-    const agentNames = [transaction.agent, transaction.coBuyerAgent].filter(name => String(name || '').trim());
+    const coAgents = String(transaction.coBuyerAgent || '').split(',').map(s => s.trim()).filter(Boolean);
+    const agentNames = Array.from(new Set([transaction.agent, ...coAgents].filter(Boolean)));
     const splits = agentNames.map(name => {
       const saved = savedSplits.find(split => split.name === name);
       return { name, amount: saved?.amount || '', percentage: saved?.percentage || '' };
@@ -359,6 +808,7 @@ function CommissionForm({ transaction, onUpdated, user }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const update = (name, value) => {
+    if (readOnly) return;
     const next = { ...form, [name]: value };
     const price = Number(name === 'salePrice' ? value : next.salePrice) || 0;
     if (name === 'salePrice' || name === 'listingCommissionPercent') next.listingCommissionAmount = ((price * (Number(next.listingCommissionPercent) || 0)) / 100).toFixed(2);
@@ -367,7 +817,9 @@ function CommissionForm({ transaction, onUpdated, user }) {
     setForm(next);
   };
   const save = async event => {
-    event.preventDefault(); setSaving(true); setMessage('');
+    event.preventDefault();
+    if (readOnly) return;
+    setSaving(true); setMessage('');
     try {
       const response = await fetch(`/api/transactions/${transaction._id}/commission`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commission: form }) });
       const result = await response.json();
@@ -377,47 +829,69 @@ function CommissionForm({ transaction, onUpdated, user }) {
     finally { setSaving(false); }
   };
   const currencyFields = ['salePrice', 'officeGrossCommission', 'adminBrokerageComp', 'otherDeductions', 'depositAmount', 'referralAmount'];
-  const updateSplit = (index, name, value) => setForm(current => ({ ...current, splits: current.splits.map((split, position) => position === index ? { ...split, [name]: value } : split) }));
+  const updateSplit = (index, name, value) => {
+    if (readOnly) return;
+    setForm(current => ({ ...current, splits: current.splits.map((split, position) => position === index ? { ...split, [name]: value } : split) }));
+  };
   const addCommissionComment = () => {
+    if (readOnly) return;
     const text = form.instructions.trim();
     if (!text) return setMessage('Please enter a comment first.');
     setForm(current => ({ ...current, instructions: '', comments: [...(current.comments || []), { text, createdAt: new Date().toISOString() }] }));
     setMessage('Comment added successfully. Save Commission to store it.');
   };
-  const field = (label, name, type = 'number', required = false, readOnly = false) => {
+  const field = (label, name, type = 'number', required = false, isReadOnly = false) => {
     const isCurrency = currencyFields.includes(name);
-    return <label><span>{label}{required && <b> *</b>}</span><input type={isCurrency ? 'text' : type} inputMode={isCurrency ? 'decimal' : undefined} step={!isCurrency && type === 'number' ? '0.01' : undefined} value={isCurrency ? formatNumberInput(form[name]) : form[name]} onChange={e => update(name, isCurrency ? cleanNumberInput(e.target.value) : e.target.value)} required={required} readOnly={readOnly} /></label>;
+    return <label>
+      <span>{label}{required && !readOnly && <b> *</b>}</span>
+      <input
+        type={isCurrency ? 'text' : type}
+        inputMode={isCurrency ? 'decimal' : undefined}
+        step={!isCurrency && type === 'number' ? '0.01' : undefined}
+        value={isCurrency ? formatNumberInput(form[name]) : form[name]}
+        onChange={e => update(name, isCurrency ? cleanNumberInput(e.target.value) : e.target.value)}
+        required={required && !readOnly}
+        readOnly={readOnly || isReadOnly}
+        disabled={readOnly}
+      />
+    </label>;
   };
   return <form className="commission-form" onSubmit={save}>
-    <section className="commission-section"><div className="section-heading"><span className="eyebrow">Financial Details</span><h2>Commission Info</h2></div>
+    <section className="commission-section"><div className="section-heading"><span className="eyebrow">{readOnly ? 'Financial Details (View Only)' : 'Financial Details'}</span><h2>Commission Info</h2></div>
       <div className="commission-grid">
         {field('Sale Price', 'salePrice', 'number', true)}
-        <fieldset className="radio-field"><legend>Personal Deal</legend><label><input type="radio" name="personalDeal" value="yes" checked={form.personalDeal === 'yes'} onChange={e => update('personalDeal', e.target.value)} /> Yes</label><label><input type="radio" name="personalDeal" value="no" checked={form.personalDeal === 'no'} onChange={e => update('personalDeal', e.target.value)} /> No</label></fieldset>
-        <div className="split-field"><label><span>Listing Commission % <b>*</b></span><input type="number" step="0.01" value={form.listingCommissionPercent} onChange={e => update('listingCommissionPercent', e.target.value)} required /></label><label><span>Calculated Amount</span><input value={money(form.listingCommissionAmount)} readOnly /></label></div>
+        <fieldset className="radio-field"><legend>Personal Deal</legend><label><input type="radio" name="personalDeal" value="yes" checked={form.personalDeal === 'yes'} disabled={readOnly} onChange={e => update('personalDeal', e.target.value)} /> Yes</label><label><input type="radio" name="personalDeal" value="no" checked={form.personalDeal === 'no'} disabled={readOnly} onChange={e => update('personalDeal', e.target.value)} /> No</label></fieldset>
+        <div className="split-field"><label><span>Listing Commission % {!readOnly && <b>*</b>}</span><input type="number" step="0.01" value={form.listingCommissionPercent} disabled={readOnly} readOnly={readOnly} onChange={e => update('listingCommissionPercent', e.target.value)} required={!readOnly} /></label><label><span>Calculated Amount</span><input value={money(form.listingCommissionAmount)} readOnly disabled={readOnly} /></label></div>
         {field('Office Gross Commission on Sale', 'officeGrossCommission', 'text', false, true)}
-        <div className="split-field"><label><span>Sale Commission % <b>*</b></span><input type="number" step="0.01" value={form.saleCommissionPercent} onChange={e => update('saleCommissionPercent', e.target.value)} required /></label><label><span>Calculated Amount</span><input value={money(form.saleCommissionAmount)} readOnly /></label></div>
+        <div className="split-field"><label><span>Sale Commission % {!readOnly && <b>*</b>}</span><input type="number" step="0.01" value={form.saleCommissionPercent} disabled={readOnly} readOnly={readOnly} onChange={e => update('saleCommissionPercent', e.target.value)} required={!readOnly} /></label><label><span>Calculated Amount</span><input value={money(form.saleCommissionAmount)} readOnly disabled={readOnly} /></label></div>
         {field('Admin Brokerage Comp', 'adminBrokerageComp')}
         {field('Other Deductions', 'otherDeductions')}
       </div>
     </section>
     <section className="commission-section"><div className="section-heading"><h2>Deposits</h2></div>
-      <fieldset className="radio-field trust-radio"><legend>Will Your Brokerage Hold Trust Money?</legend><label><input type="radio" name="holdTrustMoney" value="yes" checked={form.holdTrustMoney === 'yes'} onChange={e => update('holdTrustMoney', e.target.value)} /> Yes</label><label><input type="radio" name="holdTrustMoney" value="no" checked={form.holdTrustMoney === 'no'} onChange={e => update('holdTrustMoney', e.target.value)} /> No</label></fieldset>
+      <fieldset className="radio-field trust-radio"><legend>Will Your Brokerage Hold Trust Money?</legend><label><input type="radio" name="holdTrustMoney" value="yes" checked={form.holdTrustMoney === 'yes'} disabled={readOnly} onChange={e => update('holdTrustMoney', e.target.value)} /> Yes</label><label><input type="radio" name="holdTrustMoney" value="no" checked={form.holdTrustMoney === 'no'} disabled={readOnly} onChange={e => update('holdTrustMoney', e.target.value)} /> No</label></fieldset>
       <div className="commission-three">{field('Deposit / Receipt Commission Amount', 'depositAmount')}{field('Date of Cheque', 'chequeDate', 'date')}{field('Date Posted to Log Book', 'logBookDate', 'date')}</div>
     </section>
     {user.role === 'admin' && <><section className="commission-section"><div className="section-heading"><h2>Referral Details</h2></div>
-      <div className="commission-three"><label><span>Referral Type</span><select value={form.referralType} onChange={e => update('referralType', e.target.value)}><option value="">Select</option><option>Incoming</option><option>Outgoing</option><option>Internal</option></select></label>{field('Referral Agent', 'referralAgent', 'text')}{field('Referral Brokerage Name', 'referralBrokerageName', 'text')}</div>
-      <div className="commission-three referral-row">{field('Referral Amount', 'referralAmount')} {field('Referral Percentage', 'referralPercent')}<label><span>Supporting Document (PDF only)</span><input className="file-input" type="file" accept="application/pdf" onChange={e => update('supportingDocument', e.target.files[0]?.name || '')} />{form.supportingDocument && <small>{form.supportingDocument}</small>}</label></div>
+      <div className="commission-three"><label><span>Referral Type</span><select value={form.referralType} disabled={readOnly} onChange={e => update('referralType', e.target.value)}><option value="">Select</option><option>Incoming</option><option>Outgoing</option><option>Internal</option></select></label>{field('Referral Agent', 'referralAgent', 'text')}{field('Referral Brokerage Name', 'referralBrokerageName', 'text')}</div>
+      <div className="commission-three referral-row">{field('Referral Amount', 'referralAmount')} {field('Referral Percentage', 'referralPercent')}<label><span>Supporting Document (PDF only)</span>{!readOnly && <input className="file-input" type="file" accept="application/pdf" onChange={e => update('supportingDocument', e.target.files[0]?.name || '')} />}{form.supportingDocument && <small>{form.supportingDocument}</small>}</label></div>
     </section>
-    <section className="commission-section"><div className="section-heading"><h2>Commission Instructions</h2></div><label className="instruction-field"><span>Additional Commission Breakdown Information</span><textarea value={form.instructions} onChange={e => update('instructions', e.target.value)} placeholder="Write a comment" /></label><div className="comment-add-row"><button className="secondary add-comment-button" type="button" onClick={addCommissionComment}>+ Add Comment</button></div>{form.comments?.length > 0 && <div className="commission-comments">{[...form.comments].reverse().map((comment, index) => <article className="commission-comment" key={`${comment.createdAt}-${index}`}><p>{comment.text}</p><time>{new Date(comment.createdAt).toLocaleString('en-CA', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></article>)}</div>}</section>
+    <section className="commission-section"><div className="section-heading"><h2>Commission Instructions</h2></div><label className="instruction-field"><span>Additional Commission Breakdown Information</span><textarea value={form.instructions} disabled={readOnly} readOnly={readOnly} onChange={e => update('instructions', e.target.value)} placeholder={readOnly ? 'No additional instructions' : 'Write a comment'} /></label>{!readOnly && <div className="comment-add-row"><button className="secondary add-comment-button" type="button" onClick={addCommissionComment}>+ Add Comment</button></div>}{form.comments?.length > 0 && <div className="commission-comments">{[...form.comments].reverse().map((comment, index) => <article className="commission-comment" key={`${comment.createdAt}-${index}`}><p>{comment.text}</p><time>{new Date(comment.createdAt).toLocaleString('en-CA', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></article>)}</div>}</section>
     <section className="commission-section commission-split-section"><div className="section-heading"><span className="eyebrow">Agent Distribution</span><h2>Commission Split</h2></div>
       <div className="commission-split-head"><span>Agent Name</span><span>Currency Amount</span><span>Percentage</span></div>
       {form.splits.map((split, index) => <div className="commission-split-row" key={`${split.name}-${index}`}>
-        <label><span>Agent Name</span><input value={split.name} readOnly /></label>
-        <label><span>Currency Amount</span><input inputMode="decimal" value={formatNumberInput(split.amount)} onChange={e => updateSplit(index, 'amount', cleanNumberInput(e.target.value))} placeholder="0.00" /></label>
-        <label><span>Percentage</span><div className="percentage-input"><input type="number" min="0" max="100" step="0.01" value={split.percentage} onChange={e => updateSplit(index, 'percentage', e.target.value)} placeholder="0" /><b>%</b></div></label>
+        <label><span>Agent Name</span><input value={split.name} readOnly disabled={readOnly} /></label>
+        <label><span>Currency Amount</span><input inputMode="decimal" value={formatNumberInput(split.amount)} disabled={readOnly} readOnly={readOnly} onChange={e => updateSplit(index, 'amount', cleanNumberInput(e.target.value))} placeholder="0.00" /></label>
+        <label><span>Percentage</span><div className="percentage-input"><input type="number" min="0" max="100" step="0.01" value={split.percentage} disabled={readOnly} readOnly={readOnly} onChange={e => updateSplit(index, 'percentage', e.target.value)} placeholder="0" /><b>%</b></div></label>
       </div>)}
     </section></>}
-    <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Commission'}</button></div>
+    {readOnly ? (
+      <div className="contact-actions">
+        <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Commission details cannot be edited.</p>
+      </div>
+    ) : (
+      <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save Commission'}</button></div>
+    )}
   </form>;
 }
 
@@ -446,14 +920,18 @@ const checklistWithDefaults = checklist => {
   });
 };
 
-function ChecklistForm({ transaction, onUpdated, user }) {
+function ChecklistForm({ transaction, onUpdated, user, readOnly = false }) {
   const [rows, setRows] = useState(() => checklistWithDefaults(transaction.checklist));
   const [pendingFiles, setPendingFiles] = useState({});
   const [filter, setFilter] = useState('All Statuses');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const update = (id, name, value) => setRows(current => current.map(row => row.id === id ? { ...row, [name]: value } : row));
+  const update = (id, name, value) => {
+    if (readOnly) return;
+    setRows(current => current.map(row => row.id === id ? { ...row, [name]: value } : row));
+  };
   const removeDocument = async (itemId, fileId, name) => {
+    if (readOnly) return;
     if (!window.confirm(`Remove "${name || 'this attachment'}" from the checklist and Google Drive?`)) return;
     setMessage('');
     try {
@@ -464,6 +942,7 @@ function ChecklistForm({ transaction, onUpdated, user }) {
     } catch (error) { setMessage(error.message); }
   };
   const save = async () => {
+    if (readOnly) return;
     setSaving(true); setMessage('');
     try {
       let rowsToSave = [...rows];
@@ -471,7 +950,7 @@ function ChecklistForm({ transaction, onUpdated, user }) {
         if (!files?.length) continue;
         const uploadedDocuments = [];
         for (const file of files) {
-          if (file.size > 3 * 1024 * 1024) throw new Error(`${file.name}: File must be 3 MB or smaller`);
+          if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name}: File must be 20 MB or smaller`);
           const uploadData = new FormData(); uploadData.append('file', file);
           const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
           const uploaded = await readApiResponse(uploadResponse);
@@ -500,20 +979,26 @@ function ChecklistForm({ transaction, onUpdated, user }) {
   };
   const visibleRows = filter === 'All Statuses' ? rows : rows.filter(row => row.status === filter);
   return <div className="checklist-form">
-    <div className="checklist-heading"><div><span className="eyebrow">Compliance Documents</span><h2>Sales/Buyer Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
+    <div className="checklist-heading"><div><span className="eyebrow">{readOnly ? 'Compliance Documents (View Only)' : 'Compliance Documents'}</span><h2>Sales/Buyer Documentation</h2></div><select value={filter} onChange={e => setFilter(e.target.value)}><option>All Statuses</option><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></div>
     <div className="checklist-table-wrap"><table className="checklist-table"><thead><tr><th>#</th><th>Documentation</th><th>Status</th><th>Docs</th><th>Comments</th><th>Attachment</th></tr></thead><tbody>
       {visibleRows.map(row => <Fragment key={row.id}>
         {row.documentation === 'Listing Agreement' && <tr className="checklist-section-row"><td colSpan="6">Listing Document Name</td></tr>}
         <tr>
           <td>{row.id}.</td><td><strong>{row.documentation}</strong></td>
-          <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
+          <td><select className={`status-select status-${row.status.toLowerCase().replace(' ', '-')}`} value={row.status} disabled={readOnly} onChange={e => update(row.id, 'status', e.target.value)}><option>Incomplete</option><option>Completed</option><option>Required</option><option>If Applicable</option></select></td>
           <td>{row.driveFileId ? <span className="document-count">📎 {(row.documents || []).length || 1}</span> : <span className={row.attachment ? 'doc-attached' : 'doc-empty'} title={row.attachment || 'No document'}>{row.attachment ? '📎' : '—'}</span>}</td>
-          <td><textarea value={row.comments} onChange={e => update(row.id, 'comments', e.target.value)} placeholder="Add comments" /></td>
-          <td><div className="attachment-actions"><label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 3 * 1024 * 1024)) { setMessage('Each file must be 3 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label>{pendingFiles[row.id]?.length > 0 && <span className="pending-file-count">{pendingFiles[row.id].length} file(s) selected</span>}<div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <div className="document-version-row" key={document.driveFileId}><div className="document-version-info"><strong title={document.name}>{document.name || `Document ${documentIndex + 1}`}</strong><div><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></div></div><div className="document-version-actions"><a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer">View</a>{user.role === 'admin' && <button className="remove-document-button" type="button" title="Delete attachment" onClick={() => removeDocument(row.id, document.driveFileId, document.name)}><Trash2 size={12} /><span>Delete</span></button>}</div></div>)}</div></div></td>
+          <td><textarea value={row.comments} disabled={readOnly} readOnly={readOnly} onChange={e => update(row.id, 'comments', e.target.value)} placeholder={readOnly ? '—' : 'Add comments'} /></td>
+          <td><div className="attachment-actions">{!readOnly && <label className="attach-button">{row.attachment || pendingFiles[row.id]?.length ? 'Upload More' : 'Attach'}<input type="file" multiple onChange={e => { const files = [...e.target.files]; if (files.some(file => file.size > 20 * 1024 * 1024)) { setMessage('Each file must be 20 MB or smaller'); e.target.value = ''; return; } setPendingFiles(current => ({ ...current, [row.id]: files })); }} /></label>}{pendingFiles[row.id]?.length > 0 && <span className="pending-file-count">{pendingFiles[row.id].length} file(s) selected</span>}<div className="document-history">{(row.documents?.length ? row.documents : row.driveFileId ? [{ name: row.attachment, driveFileId: row.driveFileId, uploadedAt: transaction.updatedAt }] : []).map((document, documentIndex) => <div className="document-version-row" key={document.driveFileId}><div className="document-version-info"><strong title={document.name}>{document.name || `Document ${documentIndex + 1}`}</strong><div><small>{documentDate(document.uploadedAt)}</small><em className={documentIndex === 0 ? 'new-version' : 'old-version'}>{documentIndex === 0 ? 'New' : 'Old'}</em></div></div><div className="document-version-actions"><a className="view-document-button" href={`/api/transactions/${transaction._id}/checklist/${row.id}/document/${document.driveFileId}`} target="_blank" rel="noreferrer">View</a>{user.role === 'admin' && !readOnly && <button className="remove-document-button" type="button" title="Delete attachment" onClick={() => removeDocument(row.id, document.driveFileId, document.name)}><Trash2 size={12} /><span>Delete</span></button>}</div></div>)}</div></div></td>
         </tr>
       </Fragment>)}
     </tbody></table></div>
-    <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Checklist'}</button></div>
+    {readOnly ? (
+      <div className="contact-actions">
+        <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Compliance checklist cannot be edited.</p>
+      </div>
+    ) : (
+      <div className="contact-actions">{message && <p className={message.includes('successfully') ? 'success' : 'error'}>{message}</p>}<button className="primary" type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Checklist'}</button></div>
+    )}
   </div>;
 }
 
@@ -761,7 +1246,7 @@ function InvoiceDocument({ invoice, transaction }) {
   );
 }
 
-function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
+function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint, readOnly = false }) {
   const getInitialForm = () => ({
     id: '',
     dateTime: '',
@@ -800,6 +1285,7 @@ function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
 
   const save = async (e) => {
     e.preventDefault();
+    if (readOnly) return;
     setAlert(null);
 
     // Validate required fields
@@ -859,6 +1345,7 @@ function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
   };
 
   const handleDelete = async (receiptId) => {
+    if (readOnly) return;
     if (!window.confirm('Are you sure you want to delete this receipt?')) return;
     setSaving(true);
     try {
@@ -1021,9 +1508,13 @@ function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
                 <RotateCcw size={13} style={{ marginRight: 5 }} /> Cancel
               </button>
             )}
-            <button className="primary" disabled={saving}>
-              {saving ? 'Saving…' : editId ? 'Update Receipt' : '+ Add Receipt'}
-            </button>
+            {readOnly ? (
+              <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Receipts cannot be added or edited.</p>
+            ) : (
+              <button className="primary" disabled={saving}>
+                {saving ? 'Saving…' : editId ? 'Update Receipt' : '+ Add Receipt'}
+              </button>
+            )}
           </div>
         </form>
       </section>
@@ -1093,22 +1584,26 @@ function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
                   >
                     <Eye size={13} /> Preview
                   </button>
-                  <button
-                    type="button"
-                    className="record-act-btn"
-                    onClick={() => handleEdit(item)}
-                    title="Edit receipt"
-                  >
-                    <Pencil size={13} /> Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="record-act-btn delete-btn"
-                    onClick={() => handleDelete(item.id)}
-                    title="Delete receipt"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  {!readOnly && (
+                    <>
+                      <button
+                        type="button"
+                        className="record-act-btn"
+                        onClick={() => handleEdit(item)}
+                        title="Edit receipt"
+                      >
+                        <Pencil size={13} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="record-act-btn delete-btn"
+                        onClick={() => handleDelete(item.id)}
+                        title="Delete receipt"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </>
+                  )}
                 </div>
               </article>
             ))}
@@ -1119,7 +1614,7 @@ function ReceiptsTab({ transaction, onUpdated, user, onPreview, onPrint }) {
   );
 }
 
-function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
+function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint, readOnly = false }) {
   const getInitialForm = () => ({
     id: '',
     invoiceNumber: '',
@@ -1180,6 +1675,7 @@ function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
 
   const save = async (e) => {
     e.preventDefault();
+    if (readOnly) return;
     setAlert(null);
 
     // Validate required fields
@@ -1237,6 +1733,7 @@ function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
   };
 
   const handleDelete = async (invoiceId) => {
+    if (readOnly) return;
     if (!window.confirm('Are you sure you want to delete this invoice?')) return;
     setSaving(true);
     try {
@@ -1554,9 +2051,13 @@ function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
                 <RotateCcw size={13} style={{ marginRight: 5 }} /> Cancel
               </button>
             )}
-            <button className="primary" disabled={saving}>
-              {saving ? 'Saving…' : editId ? 'Update Invoice' : '+ Save Invoice'}
-            </button>
+            {readOnly ? (
+              <p style={{ color: 'var(--muted)', fontSize: '13px' }}>View only mode. Invoices cannot be added or edited.</p>
+            ) : (
+              <button className="primary" disabled={saving}>
+                {saving ? 'Saving…' : editId ? 'Update Invoice' : '+ Save Invoice'}
+              </button>
+            )}
           </div>
         </form>
       </section>
@@ -1631,22 +2132,26 @@ function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
                     >
                       <Eye size={13} /> Preview
                     </button>
-                    <button
-                      type="button"
-                      className="record-act-btn"
-                      onClick={() => handleEdit(item)}
-                      title="Edit invoice"
-                    >
-                      <Pencil size={13} /> Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="record-act-btn delete-btn"
-                      onClick={() => handleDelete(item.id)}
-                      title="Delete invoice"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {!readOnly && (
+                      <>
+                        <button
+                          type="button"
+                          className="record-act-btn"
+                          onClick={() => handleEdit(item)}
+                          title="Edit invoice"
+                        >
+                          <Pencil size={13} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="record-act-btn delete-btn"
+                          onClick={() => handleDelete(item.id)}
+                          title="Delete invoice"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </article>
               );
@@ -1661,10 +2166,16 @@ function InvoicesTab({ transaction, onUpdated, user, onPreview, onPrint }) {
 function TransactionDetail({ user, onLogout }) {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isEdit = searchParams.get('edit') === '1';
+  const readOnly = !isEdit;
+  const toggleMode = () => {
+    setSearchParams(isEdit ? {} : { edit: '1' });
+  };
   const [transaction, setTransaction] = useState(null);
   const [activeTab, setActiveTab] = useState('Transaction');
   const [loading, setLoading] = useState(true);
-  const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark');
+  const [dark, toggleTheme] = useThemePreference();
   const [previewDoc, setPreviewDoc] = useState(null);
   const [printingDoc, setPrintingDoc] = useState(null);
 
@@ -1675,10 +2186,6 @@ function TransactionDetail({ user, onLogout }) {
       .catch(() => setTransaction(false))
       .finally(() => setLoading(false));
   }, [id]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  }, [dark]);
 
   const triggerPrint = (type, data) => {
     setPrintingDoc({ type, data });
@@ -1693,18 +2200,32 @@ function TransactionDetail({ user, onLogout }) {
     return () => window.removeEventListener('afterprint', handleAfterPrint);
   }, []);
 
-  if (loading) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
-  if (!transaction) return <><Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
+  if (loading) return <><Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Loading transaction…</h3></div></main></>;
+  if (!transaction) return <><Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} /><main><div className="empty standalone"><h3>Transaction not found</h3><button className="text-button" onClick={() => navigate('/')}>← Back to transactions</button></div></main></>;
   const valueFor = key => key === 'salePrice' && transaction[key] ? `$${Number(transaction[key]).toLocaleString('en-CA', { minimumFractionDigits: 2 })}` : (key === 'coBuyerAgent' ? (transaction.coBuyerAgent || (transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '')) : transaction[key]) || '—';
   const visibleTabs = user.role === 'admin' ? ['Transaction', 'Contacts', 'Commission', 'Checklist', 'Receipt', 'Invoice'] : ['Transaction', 'Contacts', 'Commission', 'Checklist'];
 
   return <>
-    <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
+    <Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} />
     <main className="detail-page">
       <button className="back-link" onClick={() => navigate('/')}><ArrowLeft size={16} /> Back to transactions</button>
       <div className="record-title-row">
         <div><span className="eyebrow">Transaction Record</span><h1>{transaction.address?.split(',')[0]}</h1><p>{transaction.address?.split(',').slice(1).join(',').trim() || 'Real estate transaction'}</p></div>
-        <span className="status-pill">{transaction.status || 'Active'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <span className={`status-pill ${isEdit ? 'status-editing' : 'status-viewing'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            {isEdit ? <Pencil size={13} /> : <Eye size={13} />}
+            {isEdit ? 'Edit Mode' : 'View Only'}
+          </span>
+          <button
+            type="button"
+            className="secondary"
+            onClick={toggleMode}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
+          >
+            {isEdit ? <><Eye size={14} /> Switch to View Mode</> : <><Pencil size={14} /> Switch to Edit Mode</>}
+          </button>
+          <span className="status-pill">{transaction.status || 'Active'}</span>
+        </div>
       </div>
       <section className="record-panel">
         <div className="tabs" role="tablist">
@@ -1721,12 +2242,12 @@ function TransactionDetail({ user, onLogout }) {
           ))}
         </div>
         <div className="summary-grid">{summaryFields.map(([label, key]) => <div className="detail" key={key}><span>{label}</span><strong className={key === 'email' ? 'email-value' : ''}>{valueFor(key)}</strong></div>)}</div>
-        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} />
-          : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} />
-          : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} user={user} />
-          : activeTab === 'Checklist' ? <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} />
-          : activeTab === 'Receipt' && user.role === 'admin' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
-          : activeTab === 'Invoice' && user.role === 'admin' ? <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} /> : null}
+        {activeTab === 'Transaction' ? <TransactionEditForm transaction={transaction} onUpdated={setTransaction} readOnly={readOnly} onEditMode={() => setSearchParams({ edit: '1' })} />
+          : activeTab === 'Contacts' ? <ContactsForm transaction={transaction} onUpdated={setTransaction} readOnly={readOnly} />
+          : activeTab === 'Commission' ? <CommissionForm transaction={transaction} onUpdated={setTransaction} user={user} readOnly={readOnly} />
+          : activeTab === 'Checklist' ? <ChecklistForm transaction={transaction} onUpdated={setTransaction} user={user} readOnly={readOnly} />
+          : activeTab === 'Receipt' && user.role === 'admin' ? <ReceiptsTab transaction={transaction} onUpdated={setTransaction} user={user} readOnly={readOnly} onPreview={data => setPreviewDoc({ type: 'receipt', data })} onPrint={data => triggerPrint('receipt', data)} />
+          : activeTab === 'Invoice' && user.role === 'admin' ? <InvoicesTab transaction={transaction} onUpdated={setTransaction} user={user} readOnly={readOnly} onPreview={data => setPreviewDoc({ type: 'invoice', data })} onPrint={data => triggerPrint('invoice', data)} /> : null}
       </section>
     </main>
 
@@ -1787,8 +2308,15 @@ function TransactionModal({ onClose, onCreated, user }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
-    if (user.role !== 'admin') return;
-    fetch('/api/admin/users').then(readApiResponse).then(items => { const active = items.filter(item => item.isActive); setAgents(active); if (active.length) setForm(current => ({ ...current, assignedAgent: current.assignedAgent || active[0].id })); }).catch(error => setError(error.message));
+    fetch('/api/agents')
+      .then(readApiResponse)
+      .then(items => {
+        setAgents(items);
+        if (user.role === 'admin' && items.length) {
+          setForm(current => ({ ...current, assignedAgent: current.assignedAgent || items[0].id }));
+        }
+      })
+      .catch(error => setError(error.message));
   }, [user.role]);
   useEffect(() => {
     fetch('/api/transactions/next-deal-number')
@@ -1796,11 +2324,39 @@ function TransactionModal({ onClose, onCreated, user }) {
       .then(result => setDealPreview(result.dealNumber || ''))
       .catch(() => setDealPreview(''));
   }, []);
-  const change = e => setForm({ ...form, [e.target.name]: e.target.name === 'salePrice' ? cleanNumberInput(e.target.value) : e.target.value });
+  const change = e => {
+    const { name, value } = e.target;
+    if (name === 'seller') {
+      const { firstName, lastName } = splitSellerName(value);
+      setForm(current => ({
+        ...current,
+        seller: value,
+        sellerFirstName: firstName,
+        sellerLastName: lastName
+      }));
+      return;
+    }
+    setForm(current => ({ ...current, [name]: name === 'salePrice' ? cleanNumberInput(value) : value }));
+  };
   const submit = async e => {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      const response = await fetch('/api/transactions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const { firstName, lastName } = splitSellerName(form.seller);
+      const payload = {
+        ...form,
+        sellerFirstName: form.sellerFirstName || firstName,
+        sellerLastName: form.sellerLastName || lastName,
+        contacts: {
+          ...(form.contacts || {}),
+          seller_landlord: [{
+            ...blankContact,
+            firstName: form.sellerFirstName || firstName,
+            lastName: form.sellerLastName || lastName,
+            email: form.email || ''
+          }]
+        }
+      };
+      const response = await fetch('/api/transactions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!response.ok) throw new Error('Unable to save transaction');
       onCreated(await response.json()); onClose();
     } catch (err) { setError(err.message); setSaving(false); }
@@ -1814,14 +2370,30 @@ function TransactionModal({ onClose, onCreated, user }) {
       <form onSubmit={submit}>
         <div className="form-grid">
           {user.role === 'admin' && <label><span>Assign Agent <b>*</b></span><select name="assignedAgent" value={form.assignedAgent} onChange={change} required><option value="">Select agent</option>{agents.map(agent => <option value={agent.id} key={agent.id}>{agent.name} — {agent.email}</option>)}</select></label>}
-          {fields.map(([name, label, type, options]) => <label className={type === 'textarea' ? 'wide' : ''} key={name}>
-            <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
-            {name === 'dealNumber' ? <input value={dealPreview || 'Assigned automatically'} readOnly />
-              : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
-                : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
-                  : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
-                    : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address', 'agent', 'buyer', 'email'].includes(name)} />}
-          </label>)}
+          {fields.map(([name, label, type, options]) => {
+            if (name === 'coBuyerAgent') {
+              return (
+                <label key={name}>
+                  <span>{label}</span>
+                  <CoAgentMultiSelect
+                    value={form.coBuyerAgent}
+                    onChange={val => setForm(curr => ({ ...curr, coBuyerAgent: val }))}
+                    agents={agents}
+                  />
+                </label>
+              );
+            }
+            return (
+              <label className={type === 'textarea' ? 'wide' : ''} key={name}>
+                <span>{label}{['address', 'agent', 'buyer', 'email'].includes(name) && <b> *</b>}</span>
+                {name === 'dealNumber' ? <input value={dealPreview || 'Assigned automatically'} readOnly />
+                  : name === 'salePrice' ? <input name={name} inputMode="decimal" value={formatNumberInput(form[name])} onChange={change} placeholder={options || ''} />
+                    : type === 'textarea' ? <textarea name={name} value={form[name]} onChange={change} placeholder={options} required />
+                      : type === 'select' ? <select name={name} value={form[name]} onChange={change}>{options.map(o => <option key={o}>{o}</option>)}</select>
+                        : <input name={name} type={type} value={form[name]} onChange={change} placeholder={options || ''} required={['address', 'agent', 'buyer', 'email'].includes(name)} />}
+              </label>
+            );
+          })}
         </div>
         {error && <p className="error">{error}. Please make sure the server is running.</p>}
         <div className="form-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Create Transaction'}</button></div>
@@ -1831,7 +2403,7 @@ function TransactionModal({ onClose, onCreated, user }) {
 }
 
 function TransactionsPage({ user, onLogout }) {
-  const [dark, setDark] = useState(false);
+  const [dark, toggleTheme] = useThemePreference();
   const [open, setOpen] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [query, setQuery] = useState('');
@@ -1860,7 +2432,6 @@ function TransactionsPage({ user, onLogout }) {
       .then(setAgents)
       .catch(() => setAgents([]));
   }, [user.role]);
-  useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
 
   const handleSort = field => {
     if (sortField === field) {
@@ -1917,7 +2488,7 @@ function TransactionsPage({ user, onLogout }) {
     finally { setExporting(false); }
   };
   return <>
-    <Header dark={dark} toggleTheme={() => setDark(!dark)} user={user} onLogout={onLogout} />
+    <Header dark={dark} toggleTheme={toggleTheme} user={user} onLogout={onLogout} />
     <main>
       <div className="page-heading">
         <div><span className="eyebrow">Records Management</span><h1>Transactions</h1><p>Manage your real estate transaction records in one place.</p></div>
@@ -1965,6 +2536,7 @@ function TransactionsPage({ user, onLogout }) {
 }
 
 function AdminUsersPage({ user, onLogout }) {
+  const [dark, toggleTheme] = useThemePreference();
   const [agents, setAgents] = useState([]); const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [message, setMessage] = useState(''); const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState(null); const [editForm, setEditForm] = useState({ name: '', email: '' }); const [savingEdit, setSavingEdit] = useState(false);
@@ -2002,7 +2574,7 @@ function AdminUsersPage({ user, onLogout }) {
       setMessage(`Agent deleted successfully. ${result.retainedTransactions || 0} transaction records were retained.`);
     } catch (error) { setMessage(error.message); }
   };
-  return <><Header user={user} onLogout={onLogout} dark={false} toggleTheme={() => {}}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Agent Management</h1><p>Create and manage agent access.</p></div><Link className="secondary admin-back" to="/">Back to Transactions</Link></div>
+  return <><Header user={user} onLogout={onLogout} dark={dark} toggleTheme={toggleTheme}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Agent Management</h1><p>Create and manage agent access.</p></div><Link className="secondary admin-back" to="/">Back to Transactions</Link></div>
     <section className="admin-create-card"><h2>Create Agent Account</h2><form onSubmit={createAgent}><input placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required/><input type="email" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required/><PasswordInput minLength="8" placeholder="Temporary password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required/><button className="primary">Create Agent</button></form></section>
     {message && <p className={message.includes('successfully') ? 'success admin-message' : 'error admin-message'}>{message}</p>}
     <section className="admin-table-card"><div className="admin-table-title"><h2>Agents</h2><span>{agents.length} accounts</span></div>{loading ? <p>Loading agents…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Agent</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>{agents.map(agent => <tr key={agent.id}><td><strong>{agent.name}</strong><small>{agent.email}</small></td><td><span className={`account-status ${agent.isActive ? 'active' : 'inactive'}`}>{agent.isActive ? 'Active' : 'Deactivated'}</span></td><td>{agent.lastLoginAt ? new Date(agent.lastLoginAt).toLocaleString() : 'Never'}</td><td><div className="admin-row-actions"><button className="secondary" onClick={() => openEdit(agent)}><Pencil size={13}/> Edit</button><button className="secondary" onClick={() => resetPassword(agent)}>Reset Password</button><button className={agent.isActive ? 'danger-outline' : 'secondary'} onClick={() => toggleStatus(agent)}>{agent.isActive ? 'Deactivate' : 'Activate'}</button><button className="danger-outline" onClick={() => deleteAgent(agent)}><Trash2 size={13}/> Delete</button></div></td></tr>)}</tbody></table></div>}</section>
@@ -2011,10 +2583,11 @@ function AdminUsersPage({ user, onLogout }) {
 }
 
 function AdminLogsPage({ user, onLogout }) {
+  const [dark, toggleTheme] = useThemePreference();
   const [logs, setLogs] = useState([]); const [date, setDate] = useState(''); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   const load = () => { setLoading(true); fetch(`/api/admin/logs${date ? `?date=${date}` : ''}`).then(readApiResponse).then(setLogs).catch(error => setError(error.message)).finally(() => setLoading(false)); };
   useEffect(load, [date]);
-  return <><Header user={user} onLogout={onLogout} dark={false} toggleTheme={() => {}}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Daily Activity Logs</h1><p>Review account, transaction, checklist and email activity.</p></div><div className="log-filters"><input type="date" value={date} onChange={e => setDate(e.target.value)}/><button className="secondary" onClick={() => setDate('')}>All Dates</button></div></div>{error && <p className="error">{error}</p>}<section className="admin-table-card">{loading ? <p>Loading logs…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Date & Time</th><th>Action</th><th>Performed By</th><th>Target</th><th>Transaction</th></tr></thead><tbody>{logs.map(log => <tr key={log._id}><td>{new Date(log.createdAt).toLocaleString()}</td><td><span className="log-action">{log.action.replaceAll('.', ' ')}</span></td><td>{log.actor?.name || 'System'}<small>{log.actor?.email}</small></td><td>{log.targetUser?.name || '—'}<small>{log.targetUser?.email}</small></td><td>{log.transaction ? `${log.transaction.dealNumber || ''} ${log.transaction.address || ''}` : '—'}</td></tr>)}</tbody></table></div>}</section></main></>;
+  return <><Header user={user} onLogout={onLogout} dark={dark} toggleTheme={toggleTheme}/><main className="admin-page"><div className="page-heading"><div><span className="eyebrow">Administration</span><h1>Daily Activity Logs</h1><p>Review account, transaction, checklist and email activity.</p></div><div className="log-filters"><input type="date" value={date} onChange={e => setDate(e.target.value)}/><button className="secondary" onClick={() => setDate('')}>All Dates</button></div></div>{error && <p className="error">{error}</p>}<section className="admin-table-card">{loading ? <p>Loading logs…</p> : <div className="admin-table-wrap"><table><thead><tr><th>Date & Time</th><th>Action</th><th>Performed By</th><th>Target</th><th>Transaction</th></tr></thead><tbody>{logs.map(log => <tr key={log._id}><td>{new Date(log.createdAt).toLocaleString()}</td><td><span className="log-action">{log.action.replaceAll('.', ' ')}</span></td><td>{log.actor?.name || 'System'}<small>{log.actor?.email}</small></td><td>{log.targetUser?.name || '—'}<small>{log.targetUser?.email}</small></td><td>{log.transaction ? `${log.transaction.dealNumber || ''} ${log.transaction.address || ''}` : '—'}</td></tr>)}</tbody></table></div>}</section></main></>;
 }
 
 function AuthPage({ mode, onAuthenticated }) {

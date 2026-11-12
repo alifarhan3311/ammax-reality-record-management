@@ -39,6 +39,18 @@ export const connectDatabase = async () => {
 };
 
 const publicUser = user => ({ id: user._id, name: user.name, email: user.email, role: user.role === 'user' ? 'agent' : user.role, isActive: user.isActive, mustChangePassword: user.mustChangePassword, lastLoginAt: user.lastLoginAt, createdAt: user.createdAt });
+export const splitSellerName = (sellerName) => {
+  const trimmed = String(sellerName || '').trim();
+  if (!trimmed) return { firstName: '', lastName: '' };
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '' };
+  }
+  return {
+    firstName: parts.slice(0, -1).join(' '),
+    lastName: parts.at(-1) || ''
+  };
+};
 const tokenSecret = () => {
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET is not configured');
   return process.env.JWT_SECRET;
@@ -140,6 +152,11 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     await writeAudit(req, 'auth.password_changed');
     res.json({ message: 'Password changed successfully', user: publicUser(user) });
   } catch (error) { res.status(500).json({ message: 'Could not change password', error: error.message }); }
+});
+
+app.get('/api/agents', requireAuth, async (_req, res) => {
+  try { res.json((await User.find({ role: { $ne: 'admin' }, isActive: true }).sort({ name: 1 })).map(publicUser)); }
+  catch (error) { res.status(500).json({ message: 'Could not load agents', error: error.message }); }
 });
 
 app.get('/api/admin/users', requireAuth, requireAdmin, async (_req, res) => {
@@ -289,7 +306,38 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
       if (!agent) return res.status(400).json({ message: 'Please select an active agent' });
       assignedAgent = agent._id;
     }
-    const record = await Transaction.create({ ...req.body, dealNumber: await nextDealNumber(req.user), createdBy: req.user._id, assignedAgent });
+    const { firstName: sellerFirstName, lastName: sellerLastName } = splitSellerName(req.body.seller);
+    const contacts = { ...(req.body.contacts || {}) };
+    if (!contacts.seller_landlord || !contacts.seller_landlord.length) {
+      if (sellerFirstName || sellerLastName || req.body.email) {
+        contacts.seller_landlord = [{
+          entity: false,
+          firstName: req.body.sellerFirstName || sellerFirstName,
+          lastName: req.body.sellerLastName || sellerLastName,
+          companyName: '',
+          email: req.body.email || '',
+          streetNumber: '',
+          streetName: '',
+          postalCode: '',
+          city: '',
+          province: '',
+          fax: '',
+          phone: '',
+          alternatePhone: '',
+          notes: '',
+          forwardingAddress: ''
+        }];
+      }
+    }
+    const record = await Transaction.create({
+      ...req.body,
+      sellerFirstName: req.body.sellerFirstName || sellerFirstName,
+      sellerLastName: req.body.sellerLastName || sellerLastName,
+      contacts,
+      dealNumber: await nextDealNumber(req.user),
+      createdBy: req.user._id,
+      assignedAgent
+    });
     await writeAudit(req, 'transaction.created', { transaction: record._id, targetUser: assignedAgent, data: { address: record.address, dealNumber: record.dealNumber } });
     if (req.user.role !== 'admin') {
       const admins = await User.find({ role: 'admin', isActive: true }).select('name email');
@@ -309,8 +357,13 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'email', 'seller', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate'];
+    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'sellerFirstName', 'sellerLastName', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+    if (updates.seller !== undefined && (updates.sellerFirstName === undefined || updates.sellerLastName === undefined)) {
+      const { firstName, lastName } = splitSellerName(updates.seller);
+      updates.sellerFirstName = firstName;
+      updates.sellerLastName = lastName;
+    }
     const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: updates }, { new: true, runValidators: true });
     if (!record) return res.status(404).json({ message: 'Transaction not found' }); await writeAudit(req, 'transaction.updated', { transaction: record._id }); res.json(record);
   } catch (error) { res.status(500).json({ message: 'Could not update transaction', error: error.message }); }
@@ -350,7 +403,15 @@ for (const section of ['contacts', 'commission', 'receipts', 'invoices']) {
         const allowed = ['salePrice', 'personalDeal', 'listingCommissionPercent', 'listingCommissionAmount', 'saleCommissionPercent', 'saleCommissionAmount', 'officeGrossCommission', 'adminBrokerageComp', 'otherDeductions', 'holdTrustMoney', 'depositAmount', 'chequeDate', 'logBookDate'];
         value = { ...(existing.commission || {}), ...Object.fromEntries(Object.entries(value).filter(([key]) => allowed.includes(key))) };
       }
-      const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: { [section]: value } }, { new: true, runValidators: true });
+      const updateData = { [section]: value };
+      if (section === 'contacts' && Array.isArray(value?.seller_landlord) && value.seller_landlord[0]) {
+        const firstSeller = value.seller_landlord[0];
+        if (firstSeller.firstName !== undefined) updateData.sellerFirstName = firstSeller.firstName;
+        if (firstSeller.lastName !== undefined) updateData.sellerLastName = firstSeller.lastName;
+        const combined = [firstSeller.firstName, firstSeller.lastName].filter(Boolean).join(' ');
+        if (combined) updateData.seller = combined;
+      }
+      const record = await Transaction.findOneAndUpdate(ownerFilter(req, req.params.id), { $set: updateData }, { new: true, runValidators: true });
       if (!record) return res.status(404).json({ message: 'Transaction not found' }); await writeAudit(req, `${section}.updated`, { transaction: record._id }); res.json(record);
     } catch (error) { res.status(500).json({ message: `Could not save ${section}`, error: error.message }); }
   });
@@ -379,7 +440,7 @@ app.put('/api/transactions/:id/checklist', requireAuth, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Could not save checklist', error: error.message }); }
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const driveClient = () => {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
@@ -532,7 +593,7 @@ app.get(['/api/cron/checklist-reminders', '/api/cron/checklist-reminders/edt', '
 app.use((error, _req, res, _next) => {
   console.error('API request failed:', error.message);
   if (error instanceof SyntaxError && 'body' in error) return res.status(400).json({ message: 'Request body is not valid JSON' });
-  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'File must be 3 MB or smaller' });
+  if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'File must be 20 MB or smaller' });
   res.status(500).json({ message: 'Unexpected server error', error: error.message });
 });
 
@@ -548,6 +609,51 @@ const performAdminBootstrap = async () => {
   else if (admin.role !== 'admin') { admin.role = 'admin'; await admin.save(); }
   await Transaction.updateMany({ createdBy: { $exists: false } }, { $set: { createdBy: admin._id } });
   await Transaction.updateMany({ assignedAgent: { $exists: false } }, { $set: { assignedAgent: admin._id } });
+  const unparsedTransactions = await Transaction.find({
+    seller: { $exists: true, $ne: '' },
+    $or: [
+      { sellerFirstName: { $exists: false } },
+      { sellerLastName: { $exists: false } },
+      { 'contacts.seller_landlord': { $exists: false } },
+      { 'contacts.seller_landlord': { $size: 0 } }
+    ]
+  }).select('_id seller email contacts sellerFirstName sellerLastName');
+  if (unparsedTransactions.length) {
+    const bulkOps = unparsedTransactions.map(tx => {
+      const { firstName, lastName } = splitSellerName(tx.seller);
+      const contacts = tx.contacts || {};
+      const sellerLandlord = Array.isArray(contacts.seller_landlord) && contacts.seller_landlord.length ? contacts.seller_landlord : [{
+        entity: false,
+        firstName,
+        lastName,
+        companyName: '',
+        email: tx.email || '',
+        streetNumber: '',
+        streetName: '',
+        postalCode: '',
+        city: '',
+        province: '',
+        fax: '',
+        phone: '',
+        alternatePhone: '',
+        notes: '',
+        forwardingAddress: ''
+      }];
+      return {
+        updateOne: {
+          filter: { _id: tx._id },
+          update: {
+            $set: {
+              sellerFirstName: tx.sellerFirstName || firstName,
+              sellerLastName: tx.sellerLastName || lastName,
+              'contacts.seller_landlord': sellerLandlord
+            }
+          }
+        }
+      };
+    });
+    await Transaction.bulkWrite(bulkOps);
+  }
   return admin;
 };
 export const bootstrapAdmin = async () => {
