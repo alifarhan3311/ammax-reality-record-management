@@ -449,8 +449,60 @@ const driveClient = () => {
   if (!oauthClientId || !oauthClientSecret || !oauthRefreshToken || !folderId) throw new Error('Google Drive OAuth credentials are incomplete');
   const auth = new google.auth.OAuth2(oauthClientId, oauthClientSecret);
   auth.setCredentials({ refresh_token: oauthRefreshToken });
-  return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'oauth' };
+  return { drive: google.drive({ version: 'v3', auth }), folderId, mode: 'oauth', auth };
 };
+
+app.post('/api/transactions/:id/checklist/:itemId/upload-session', requireAuth, async (req, res) => {
+  try {
+    const { name, size, mimeType } = req.body || {};
+    if (!name) return res.status(400).json({ message: 'File name is required' });
+
+    const transaction = await Transaction.findOne(ownerFilter(req, req.params.id)).lean();
+    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+
+    const { auth, folderId } = driveClient();
+    const tokenResponse = await auth.getAccessToken();
+    const accessToken = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+    if (!accessToken) throw new Error('Could not obtain Google Drive access token');
+
+    const safeAddress = (transaction.address || 'Transaction').replace(/[^a-z0-9 _-]/gi, '').slice(0, 60);
+    const fileName = `${safeAddress} - ${name}`;
+    const clientOrigin = req.headers.origin || process.env.APP_URL || 'https://ammax-reality-record-management.vercel.app';
+
+    const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink,mimeType,size,createdTime';
+    const initResponse = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Type': mimeType || 'application/octet-stream',
+        'X-Upload-Content-Length': size ? String(size) : '',
+        'Origin': clientOrigin
+      },
+      body: JSON.stringify({
+        name: fileName,
+        parents: [folderId]
+      })
+    });
+
+    if (!initResponse.ok) {
+      const errText = await initResponse.text();
+      throw new Error(`Google Drive direct upload session failed (${initResponse.status}): ${errText}`);
+    }
+
+    const uploadUrl = initResponse.headers.get('location');
+    if (!uploadUrl) throw new Error('Google Drive did not return a resumable upload location');
+
+    res.json({ uploadUrl, fileName });
+  } catch (error) {
+    const quotaError = /service accounts do not have storage quota/i.test(error.message);
+    res.status(500).json({
+      message: quotaError ? 'This Google Drive folder requires OAuth user credentials or a Workspace Shared Drive.' : (error.message || 'Could not initiate direct upload'),
+      error: error.message
+    });
+  }
+});
+
 app.post('/api/transactions/:id/checklist/:itemId/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Please select a file' });
   try {

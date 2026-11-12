@@ -951,11 +951,54 @@ function ChecklistForm({ transaction, onUpdated, user, readOnly = false }) {
         const uploadedDocuments = [];
         for (const file of files) {
           if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name}: File must be 20 MB or smaller`);
-          const uploadData = new FormData(); uploadData.append('file', file);
-          const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
-          const uploaded = await readApiResponse(uploadResponse);
-          if (!uploadResponse.ok) throw new Error(`${file.name}: ${uploaded.error || uploaded.message || 'Upload failed'}`);
-          uploadedDocuments.push({ name: uploaded.name, driveFileId: uploaded.id, mimeType: uploaded.mimeType, uploadedAt: uploaded.createdTime || new Date().toISOString() });
+
+          let uploaded = null;
+          // Step 1: Direct Google Drive Resumable Upload (bypasses Vercel 4.5MB limit completely)
+          try {
+            const sessionRes = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload-session`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: file.name,
+                size: file.size,
+                mimeType: file.type || 'application/octet-stream'
+              })
+            });
+
+            if (sessionRes.ok) {
+              const session = await sessionRes.json();
+              if (session.uploadUrl) {
+                const driveRes = await fetch(session.uploadUrl, {
+                  method: 'PUT',
+                  headers: {
+                    'Content-Type': file.type || 'application/octet-stream'
+                  },
+                  body: file
+                });
+                if (driveRes.ok) {
+                  uploaded = await driveRes.json();
+                }
+              }
+            }
+          } catch (sessionErr) {
+            console.warn('Direct upload session initiation failed, falling back to server relay...', sessionErr);
+          }
+
+          // Step 2: Fallback to server relay upload if direct upload did not complete
+          if (!uploaded || !uploaded.id) {
+            const uploadData = new FormData();
+            uploadData.append('file', file);
+            const uploadResponse = await fetch(`/api/transactions/${transaction._id}/checklist/${itemId}/upload`, { method: 'POST', body: uploadData });
+            uploaded = await readApiResponse(uploadResponse);
+            if (!uploadResponse.ok) throw new Error(`${file.name}: ${uploaded.error || uploaded.message || 'Upload failed'}`);
+          }
+
+          uploadedDocuments.push({
+            name: uploaded.name || file.name,
+            driveFileId: uploaded.id,
+            mimeType: uploaded.mimeType || file.type,
+            uploadedAt: uploaded.createdTime || new Date().toISOString()
+          });
         }
         rowsToSave = rowsToSave.map(row => {
           if (String(row.id) !== String(itemId)) return row;
@@ -965,17 +1008,14 @@ function ChecklistForm({ transaction, onUpdated, user, readOnly = false }) {
           return { ...row, attachment: latest.name, driveFileId: latest.driveFileId, mimeType: latest.mimeType, documents };
         });
       }
-      const response = await fetch(`/api/transactions/${transaction._id}/checklist`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: rows }) });
+      const response = await fetch(`/api/transactions/${transaction._id}/checklist`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: rowsToSave }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || 'Could not save checklist');
-      if (rowsToSave !== rows) {
-        const finalResponse = await fetch(`/api/transactions/${transaction._id}/checklist`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checklist: rowsToSave }) });
-        const finalResult = await finalResponse.json(); if (!finalResponse.ok) throw new Error(finalResult.message || 'Could not save Drive links');
-        setRows(finalResult.checklist || rowsToSave); onUpdated(finalResult);
-      } else { setRows(result.checklist || rows); onUpdated(result); }
-      setPendingFiles({}); setMessage('Checklist and Drive files saved successfully.');
-    } catch (error) { setMessage(error.message); }
-    finally { setSaving(false); }
+      setPendingFiles({});
+      setRows(checklistWithDefaults(result.checklist));
+      onUpdated(result);
+      setMessage('Checklist saved successfully.');
+    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
   };
   const visibleRows = filter === 'All Statuses' ? rows : rows.filter(row => row.status === filter);
   return <div className="checklist-form">
