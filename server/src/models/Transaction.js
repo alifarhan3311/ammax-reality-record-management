@@ -11,7 +11,7 @@ const transactionSchema = new mongoose.Schema({
   office: String, subjectRemovalDate: String,
   mlsNumber: String, streetNumber: String, direction: String, streetName: String, unitNumber: String,
   postalCode: String, province: String, city: String, county: String, coBuyerAgent: String,
-  officeLead: String, actualClosingDate: String,
+  officeLead: String, actualClosingDate: String, status: { type: String, default: 'Open Deal' },
   contacts: { type: mongoose.Schema.Types.Mixed, default: {} },
   commission: { type: mongoose.Schema.Types.Mixed, default: {} },
   checklist: { type: mongoose.Schema.Types.Mixed, default: [] },

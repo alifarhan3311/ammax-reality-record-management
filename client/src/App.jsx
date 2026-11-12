@@ -110,7 +110,14 @@ function Header({ dark, toggleTheme, user, onLogout }) {
   </header>;
 }
 
+const getDealStatus = item => {
+  const s = String(item?.status || '').trim().toLowerCase();
+  if (s === 'close deal' || s === 'closed' || s === 'close') return 'Close Deal';
+  return 'Open Deal';
+};
+
 function TransactionCard({ item, onDelete, showOwner, sortField, sortOrder, onSort }) {
+  const dealStatus = getDealStatus(item);
   const display = [
     ['Address', item.address, 'address'],
     ['Buyer', item.buyer, 'buyer'],
@@ -137,8 +144,13 @@ function TransactionCard({ item, onDelete, showOwner, sortField, sortOrder, onSo
         </button>
         <strong>{value || '—'}</strong>
       </div>;
-    })}</div>{showOwner && <div className="owner-line"><ShieldCheck size={13} /><span>Created by <strong>{item.createdBy?.name || 'Administrator'}</strong>{item.createdBy?.email && ` · ${item.createdBy.email}`}</span></div>}
+    })}</div>
+    {showOwner && <div className="owner-line"><ShieldCheck size={13} /><span>Created by <strong>{item.createdBy?.name || 'Administrator'}</strong>{item.createdBy?.email && ` · ${item.createdBy.email}`}</span></div>}
     <div className="card-actions">
+      <span className={`deal-status-badge status-${dealStatus === 'Close Deal' ? 'closed' : 'open'}`}>
+        <span className="status-dot" />
+        {dealStatus}
+      </span>
       <Link className="action-button view-action" to={`/transactions/${item._id || item.id}`} aria-label={`View ${item.address}`} title="View transaction"><Eye size={18} /></Link>
       <Link className="action-button edit-action" to={`/transactions/${item._id || item.id}?edit=1`} aria-label={`Edit ${item.address}`} title="Edit transaction"><Pencil size={17} /></Link>
       {showOwner && <button className="action-button delete-action" type="button" onClick={() => onDelete(item)} aria-label={`Delete ${item.address}`} title="Delete transaction"><Trash2 size={17} /></button>}
@@ -156,19 +168,19 @@ function CoAgentMultiSelect({ value = '', onChange, agents = [], disabled = fals
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
-  const selected = value
-    ? String(value)
+  const selected = Array.isArray(value)
+    ? value.map(v => String(v?.name || v || '').trim()).filter(Boolean)
+    : String(value || '')
         .split(',')
         .map(s => s.trim())
-        .filter(Boolean)
-    : [];
+        .filter(Boolean);
 
   const optionList = [
-    ...agents.map(a => a.name || a),
+    ...agents.map(a => (typeof a === 'object' ? a.name : a) || '').filter(Boolean),
     'Seller',
     'Buyer'
   ];
-  const uniqueOptions = Array.from(new Set(optionList.filter(Boolean)));
+  const uniqueOptions = Array.from(new Set(optionList.map(o => String(o).trim()).filter(Boolean)));
 
   useEffect(() => {
     if (!open) return;
@@ -181,17 +193,28 @@ function CoAgentMultiSelect({ value = '', onChange, agents = [], disabled = fals
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open]);
 
+  const isOptionChecked = (opt) => {
+    const target = String(opt || '').trim().toLowerCase();
+    return selected.some(s => s.toLowerCase() === target);
+  };
+
   const toggleOption = (opt) => {
     if (disabled) return;
-    const exists = selected.includes(opt);
-    const next = exists ? selected.filter(s => s !== opt) : [...selected, opt];
+    const cleanOpt = String(opt || '').trim();
+    if (!cleanOpt) return;
+    const target = cleanOpt.toLowerCase();
+    const exists = selected.some(s => s.toLowerCase() === target);
+    const next = exists
+      ? selected.filter(s => s.toLowerCase() !== target)
+      : [...selected, cleanOpt];
     onChange(next.join(', '));
   };
 
   const removeChip = (e, opt) => {
     e.stopPropagation();
     if (disabled) return;
-    const next = selected.filter(s => s !== opt);
+    const target = String(opt || '').trim().toLowerCase();
+    const next = selected.filter(s => s.toLowerCase() !== target);
     onChange(next.join(', '));
   };
 
@@ -202,7 +225,11 @@ function CoAgentMultiSelect({ value = '', onChange, agents = [], disabled = fals
     >
       <div
         className="coagent-multiselect-trigger"
-        onClick={() => !disabled && setOpen(!open)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!disabled) setOpen(!open);
+        }}
         tabIndex={disabled ? -1 : 0}
         role="button"
         aria-haspopup="listbox"
@@ -246,17 +273,25 @@ function CoAgentMultiSelect({ value = '', onChange, agents = [], disabled = fals
       {open && !disabled && (
         <div className="coagent-dropdown-menu" role="listbox">
           {uniqueOptions.map(opt => {
-            const isChecked = selected.includes(opt);
+            const isChecked = isOptionChecked(opt);
             return (
               <div
                 key={opt}
                 className={`coagent-option-item ${isChecked ? 'is-selected' : ''}`}
-                onClick={() => toggleOption(opt)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleOption(opt);
+                }}
                 role="option"
                 aria-selected={isChecked}
               >
                 <div className={`coagent-custom-checkbox ${isChecked ? 'is-checked' : ''}`}>
-                  {isChecked && <Check size={11} strokeWidth={3} color="#fff" />}
+                  {isChecked && <Check size={12} strokeWidth={3.5} color="#111" />}
                 </div>
                 <span className="coagent-option-label">{opt}</span>
               </div>
@@ -323,7 +358,7 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
     province: normalizeProvince(transaction.province || provincePostal?.[1] || ''),
     city: transaction.city || addressParts[1] || '',
     county: transaction.county || '',
-    coBuyerAgent: transaction.coBuyerAgent || '',
+    coBuyerAgent: transaction.coBuyerAgent || (transaction.reviewer && transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '') || '',
     type: transaction.type || 'Purchase',
     salePrice: transaction.salePrice || '',
     dealNumber: transaction.dealNumber || '',
@@ -355,7 +390,7 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
       province: normalizeProvince(transaction.province || prov?.[1] || ''),
       city: transaction.city || parts[1] || '',
       county: transaction.county || '',
-      coBuyerAgent: transaction.coBuyerAgent || '',
+      coBuyerAgent: transaction.coBuyerAgent || (transaction.reviewer && transaction.reviewer !== 'Unassigned' ? transaction.reviewer : '') || '',
       type: transaction.type || 'Purchase',
       salePrice: transaction.salePrice || '',
       dealNumber: transaction.dealNumber || '',
@@ -539,15 +574,15 @@ function TransactionEditForm({ transaction, onUpdated, readOnly = false, onEditM
         </label>
         {input('City', 'city', 'text', false, false, e => updateAddressPart('city', e.target.value))}
         {input('County', 'county', 'text', false, false, e => updateAddressPart('county', e.target.value))}
-        <label>
-          <span>Co Agent</span>
+        <div className="coagent-form-field">
+          <span className="field-label">Co Agent</span>
           <CoAgentMultiSelect
             value={form.coBuyerAgent}
             onChange={val => update('coBuyerAgent', val)}
             agents={agents}
             disabled={readOnly}
           />
-        </label>
+        </div>
         <label>
           <span>Type (Representation) <b>*</b></span>
           <select disabled={readOnly} value={form.type} onChange={e => update('type', e.target.value)} required={!readOnly}>
@@ -2252,6 +2287,34 @@ function TransactionDetail({ user, onLogout }) {
       <div className="record-title-row">
         <div><span className="eyebrow">Transaction Record</span><h1>{transaction.address?.split(',')[0]}</h1><p>{transaction.address?.split(',').slice(1).join(',').trim() || 'Real estate transaction'}</p></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div className="deal-status-selector">
+            <span className="deal-status-label">Deal Status:</span>
+            <select
+              id="detail-deal-status"
+              className={`deal-status-dropdown status-${getDealStatus(transaction) === 'Close Deal' ? 'closed' : 'open'}`}
+              value={getDealStatus(transaction)}
+              onChange={async (e) => {
+                const newStatus = e.target.value;
+                try {
+                  const res = await fetch(`/api/transactions/${transaction._id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                  });
+                  if (res.ok) {
+                    const updated = await res.json();
+                    setTransaction(updated);
+                  }
+                } catch (err) {
+                  console.error(err);
+                }
+              }}
+              title="Change Deal Status"
+            >
+              <option value="Open Deal">Open Deal</option>
+              <option value="Close Deal">Close Deal</option>
+            </select>
+          </div>
           <span className={`status-pill ${isEdit ? 'status-editing' : 'status-viewing'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
             {isEdit ? <Pencil size={13} /> : <Eye size={13} />}
             {isEdit ? 'Edit Mode' : 'View Only'}
@@ -2264,7 +2327,6 @@ function TransactionDetail({ user, onLogout }) {
           >
             {isEdit ? <><Eye size={14} /> Switch to View Mode</> : <><Pencil size={14} /> Switch to Edit Mode</>}
           </button>
-          <span className="status-pill">{transaction.status || 'Active'}</span>
         </div>
       </div>
       <section className="record-panel">
@@ -2413,14 +2475,14 @@ function TransactionModal({ onClose, onCreated, user }) {
           {fields.map(([name, label, type, options]) => {
             if (name === 'coBuyerAgent') {
               return (
-                <label key={name}>
-                  <span>{label}</span>
+                <div className="coagent-form-field" key={name}>
+                  <span className="field-label">{label}</span>
                   <CoAgentMultiSelect
                     value={form.coBuyerAgent}
                     onChange={val => setForm(curr => ({ ...curr, coBuyerAgent: val }))}
                     agents={agents}
                   />
-                </label>
+                </div>
               );
             }
             return (
@@ -2455,6 +2517,7 @@ function TransactionsPage({ user, onLogout }) {
   const [exporting, setExporting] = useState(false);
   const [agents, setAgents] = useState([]);
   const [selectedAgent, setSelectedAgent] = useState('');
+  const [dealStatusFilter, setDealStatusFilter] = useState('');
   useEffect(() => {
     fetch('/api/transactions')
       .then(async response => {
@@ -2485,8 +2548,9 @@ function TransactionsPage({ user, onLogout }) {
   const filtered = transactions.filter(t => {
     const assignedAgentId = typeof t.assignedAgent === 'object' ? (t.assignedAgent?._id || t.assignedAgent?.id) : t.assignedAgent;
     const matchesAgent = !selectedAgent || String(assignedAgentId || '') === selectedAgent;
+    const matchesStatus = !dealStatusFilter || getDealStatus(t) === dealStatusFilter;
     const matchesQuery = [t.address, t.buyer, t.seller, t.agent, t.dealNumber].some(v => String(v || '').toLowerCase().includes(query.toLowerCase()));
-    return matchesAgent && matchesQuery;
+    return matchesAgent && matchesStatus && matchesQuery;
   });
   const displayedTransactions = sortTransactions(filtered, sortField, sortOrder);
 
@@ -2506,7 +2570,7 @@ function TransactionsPage({ user, onLogout }) {
     setExporting(true);
     try {
       const columns = [
-        ['Deal Number', 'dealNumber'], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
+        ['Deal Number', 'dealNumber'], ['Deal Status', item => getDealStatus(item)], ['Address', 'address'], ['Agent', 'agent'], ['Co Agent', 'coBuyerAgent'],
         ['Buyer', 'buyer'], ['Seller', 'seller'], ['Sale Price', item => item.salePrice ? Number(item.salePrice).toLocaleString('en-CA', { minimumFractionDigits: 2 }) : ''],
         ['Type', 'type'], ['Acceptance Date', 'acceptanceDate'], ['Close of Deal', 'closeOfDeal'], ['Subject Removal Date', 'subjectRemovalDate'],
         ['Email', 'email'], ['Office', 'office'], ['Checklist Type', 'checklistType'],
@@ -2536,6 +2600,19 @@ function TransactionsPage({ user, onLogout }) {
       </div>
       <div className="toolbar">
         <div className="search"><Search size={18} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search transactions" /></div>
+        <div className="deal-status-filter">
+          <label htmlFor="deal-status-filter-select" className="sort-label">Status:</label>
+          <select
+            id="deal-status-filter-select"
+            className="sort-select"
+            value={dealStatusFilter}
+            onChange={e => setDealStatusFilter(e.target.value)}
+          >
+            <option value="">All Deals</option>
+            <option value="Open Deal">Open Deal</option>
+            <option value="Close Deal">Close Deal</option>
+          </select>
+        </div>
         {user.role === 'admin' && <div className="agent-filter"><label htmlFor="agent-filter-select" className="sort-label">Agent:</label><select id="agent-filter-select" className="sort-select" value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)}><option value="">All Agents</option>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}{agent.isActive ? '' : ' (Inactive)'}</option>)}</select></div>}
         <div className="sort-controls">
           <label htmlFor="sort-field-select" className="sort-label">Sort by:</label>

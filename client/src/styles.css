@@ -1103,7 +1103,7 @@ input[readonly]:not([type="checkbox"]):not([type="radio"]) {
 .coagent-custom-checkbox.is-checked {
   background: var(--brand);
   border-color: var(--brand);
-  color: #fff;
+  color: #111;
 }
 
 .coagent-option-label {
@@ -1113,8 +1113,122 @@ input[readonly]:not([type="checkbox"]):not([type="radio"]) {
   line-height: 1.3;
 }
 
+.coagent-form-field {
+  display: flex;
+  flex-direction: column;
+}
+.coagent-form-field .field-label {
+  display: block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
 
 /* Full span field in transaction form */
 .transaction-form-grid .full-span-field {
   grid-column: 1 / -1;
+}
+
+/* Deal Status Dropdown & Badge Styles */
+.deal-status-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 6px 4px 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.deal-status-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.deal-status-dropdown {
+  height: 32px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0 14px;
+  outline: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+.deal-status-dropdown.status-open {
+  background: color-mix(in srgb, #16a34a 20%, var(--surface));
+  color: #22c55e;
+  border-color: color-mix(in srgb, #16a34a 45%, transparent);
+}
+.deal-status-dropdown.status-open:hover,
+.deal-status-dropdown.status-open:focus {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #16a34a 25%, transparent);
+}
+.deal-status-dropdown.status-closed {
+  background: color-mix(in srgb, #ef4444 20%, var(--surface));
+  color: #ef4444;
+  border-color: color-mix(in srgb, #ef4444 45%, transparent);
+}
+.deal-status-dropdown.status-closed:hover,
+.deal-status-dropdown.status-closed:focus {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 25%, transparent);
+}
+.deal-status-dropdown option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.deal-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.deal-status-badge.status-open {
+  background: color-mix(in srgb, #16a34a 16%, var(--surface));
+  color: #22c55e;
+  border: 1px solid color-mix(in srgb, #16a34a 35%, transparent);
+}
+.deal-status-badge.status-closed {
+  background: color-mix(in srgb, #ef4444 16%, var(--surface));
+  color: #ef4444;
+  border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+}
+.deal-status-badge .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.deal-status-badge.status-open .status-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+.deal-status-badge.status-closed .status-dot {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+}
+
+.deal-status-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.deal-status-filter .sort-select {
+  min-width: 120px;
 }

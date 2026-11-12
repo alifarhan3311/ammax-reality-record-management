@@ -357,7 +357,7 @@ app.post('/api/transactions', requireAuth, async (req, res) => {
 });
 app.put('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'sellerFirstName', 'sellerLastName', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate'];
+    const allowed = ['address', 'agent', 'closeOfDeal', 'salePrice', 'buyer', 'acceptanceDate', 'dealNumber', 'email', 'seller', 'sellerFirstName', 'sellerLastName', 'reviewer', 'type', 'checklistType', 'office', 'subjectRemovalDate', 'mlsNumber', 'streetNumber', 'direction', 'streetName', 'unitNumber', 'postalCode', 'province', 'city', 'county', 'coBuyerAgent', 'officeLead', 'actualClosingDate', 'status'];
     const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
     if (updates.seller !== undefined && (updates.sellerFirstName === undefined || updates.sellerLastName === undefined)) {
       const { firstName, lastName } = splitSellerName(updates.seller);
